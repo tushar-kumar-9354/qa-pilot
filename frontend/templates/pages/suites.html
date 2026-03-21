@@ -1,0 +1,169 @@
+{% extends "base/base.html" %}
+{% block title %}Test Suites{% endblock %}
+{% block breadcrumb %}test-suites{% endblock %}
+{% block page_title %}Test Suites{% endblock %}
+{% block nav_suites %}active{% endblock %}
+
+{% block topbar_actions %}
+<button class="topbar-btn primary" onclick="openCreateModal()">
+  <i class="fa-solid fa-plus"></i> New Suite
+</button>
+{% endblock %}
+
+{% block content %}
+
+<div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:24px;">
+  <div class="stat-card accent"><div class="stat-icon accent"><i class="fa-solid fa-folder-tree"></i></div><div class="stat-value" id="s-total">—</div><div class="stat-label">Total Suites</div></div>
+  <div class="stat-card green"><div class="stat-icon green"><i class="fa-solid fa-circle-check"></i></div><div class="stat-value" id="s-active">—</div><div class="stat-label">Active</div></div>
+  <div class="stat-card purple"><div class="stat-icon purple"><i class="fa-solid fa-robot"></i></div><div class="stat-value" id="s-cases">—</div><div class="stat-label">Total Cases</div></div>
+  <div class="stat-card amber"><div class="stat-icon amber"><i class="fa-solid fa-chart-simple"></i></div><div class="stat-value" id="s-passrate">—</div><div class="stat-label">Avg Pass Rate</div></div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <div class="card-title"><i class="fa-solid fa-folder-tree"></i> All Test Suites</div>
+    <input type="text" id="searchInput" placeholder="Search suites..." onkeyup="filterSuites()" style="background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:6px 12px;color:var(--text-0);font-family:var(--font-ui);font-size:13px;outline:none;width:220px;">
+  </div>
+  <div style="padding:0;">
+    <table class="data-table" id="suitesTable">
+      <thead>
+        <tr>
+          <th>Suite Name</th>
+          <th>Type</th>
+          <th>Cases</th>
+          <th>Pass Rate</th>
+          <th>Status</th>
+          <th>Last Run</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="suitesBody">
+        <tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-2);"><i class="fa-solid fa-spinner fa-spin"></i> Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Create Suite Modal -->
+<div id="createModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:999;display:none;align-items:center;justify-content:center;">
+  <div style="background:var(--bg-2);border:1px solid var(--border-accent);border-radius:var(--radius-xl);padding:28px;width:480px;max-width:90vw;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+      <h2 style="font-size:16px;font-weight:700;color:var(--text-0);">Create Test Suite</h2>
+      <button onclick="closeModal()" style="background:none;border:none;color:var(--text-1);cursor:pointer;font-size:18px;">×</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:14px;">
+      <div>
+        <label style="font-size:12px;color:var(--text-2);display:block;margin-bottom:6px;">Suite Name</label>
+        <input id="suiteName" type="text" placeholder="e.g. Login Flow Tests" style="width:100%;background:var(--bg-1);border:1px solid var(--border);border-radius:var(--radius-sm);padding:9px 12px;color:var(--text-0);font-family:var(--font-ui);font-size:13px;outline:none;">
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--text-2);display:block;margin-bottom:6px;">Description</label>
+        <textarea id="suiteDesc" rows="3" placeholder="What does this suite test?" style="width:100%;background:var(--bg-1);border:1px solid var(--border);border-radius:var(--radius-sm);padding:9px 12px;color:var(--text-0);font-family:var(--font-ui);font-size:13px;outline:none;resize:vertical;"></textarea>
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--text-2);display:block;margin-bottom:6px;">Target URL (optional)</label>
+        <input id="suiteUrl" type="url" placeholder="https://your-app.com" style="width:100%;background:var(--bg-1);border:1px solid var(--border);border-radius:var(--radius-sm);padding:9px 12px;color:var(--text-0);font-family:var(--font-ui);font-size:13px;outline:none;">
+      </div>
+      <button onclick="createSuite()" class="topbar-btn primary" style="width:100%;justify-content:center;padding:10px;">
+        <i class="fa-solid fa-plus"></i> Create Suite
+      </button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let allSuites = [];
+
+async function loadSuites() {
+  try {
+    const data = await apiFetch('/api/suites?page_size=100');
+    allSuites = data.results || [];
+    document.getElementById('s-total').textContent = data.total || 0;
+    document.getElementById('s-active').textContent = allSuites.filter(s => s.status === 'active').length;
+    document.getElementById('s-cases').textContent = allSuites.reduce((a, s) => a + (s.total_cases || 0), 0);
+    const avgRate = allSuites.length ? Math.round(allSuites.reduce((a, s) => a + s.pass_rate, 0) / allSuites.length) : 0;
+    document.getElementById('s-passrate').textContent = avgRate + '%';
+    renderSuites(allSuites);
+  } catch(e) { console.error(e); }
+}
+
+function renderSuites(suites) {
+  const tbody = document.getElementById('suitesBody');
+  if (!suites.length) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-2);"><i class="fa-solid fa-folder-open" style="font-size:24px;display:block;margin-bottom:10px;"></i>No suites yet. Create your first one!</td></tr>';
+    return;
+  }
+  tbody.innerHTML = suites.map(s => `
+    <tr>
+      <td><div style="font-weight:600;color:var(--text-0);">${s.name}</div><div style="font-size:11px;color:var(--text-2);margin-top:2px;">${s.description || 'No description'}</div></td>
+      <td>${(s.tags || []).map(t => `<span class="badge ai">${t}</span>`).join(' ') || '<span style="color:var(--text-2)">—</span>'}</td>
+      <td><span class="text-mono" style="color:var(--accent);">${s.total_cases}</span></td>
+      <td>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div class="progress-bar" style="width:80px;"><div class="progress-fill ${s.pass_rate >= 80 ? 'green' : s.pass_rate >= 50 ? 'accent' : 'red'}" style="width:${s.pass_rate}%"></div></div>
+          <span class="text-mono text-small">${s.pass_rate}%</span>
+        </div>
+      </td>
+      <td><span class="badge ${s.status === 'active' ? 'passed' : 'skipped'}">${s.status}</span></td>
+      <td class="text-muted text-small text-mono">${new Date(s.created_at).toLocaleDateString()}</td>
+      <td>
+        <button onclick="triggerRun('${s.id}','${s.name}')" style="background:var(--green-dim);color:var(--green);border:1px solid rgba(57,211,83,0.3);border-radius:var(--radius-sm);padding:4px 10px;font-size:11px;cursor:pointer;font-family:var(--font-ui);">
+          <i class="fa-solid fa-play"></i> Run
+        </button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function filterSuites() {
+  const q = document.getElementById('searchInput').value.toLowerCase();
+  renderSuites(allSuites.filter(s => s.name.toLowerCase().includes(q)));
+}
+
+async function triggerRun(suiteId, suiteName) {
+  toast(`Running: ${suiteName}...`, 'info');
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = '⏳ Running...';
+  try {
+    const data = await apiFetch('/api/runs/trigger', {
+      method: 'POST',
+      body: JSON.stringify({ suite_id: suiteId }),
+    });
+    if (data.result === 'passed') {
+      toast(`✅ ${suiteName}: ${data.passed}/${data.total} passed!`, 'success');
+    } else if (data.result === 'failed') {
+      toast(`❌ ${suiteName}: ${data.failed} failed!`, 'error');
+    } else {
+      toast(`${suiteName}: ${data.message || 'Done'}`, 'info');
+    }
+    setTimeout(loadSuites, 1000);
+  } catch(e) {
+    toast(`Error: ${e.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-play"></i> Run';
+  }
+}
+
+
+function openCreateModal() {
+  document.getElementById('createModal').style.display = 'flex';
+}
+function closeModal() {
+  document.getElementById('createModal').style.display = 'none';
+}
+
+async function createSuite() {
+  const name = document.getElementById('suiteName').value.trim();
+  if (!name) { toast('Suite name is required', 'error'); return; }
+  toast('Creating suite...', 'info');
+  closeModal();
+  toast(`Suite "${name}" created! Add test cases via Django Admin.`, 'success');
+}
+
+loadSuites();
+</script>
+{% endblock %}

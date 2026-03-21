@@ -1,0 +1,136 @@
+{% extends "base/base.html" %}
+{% block title %}Web Scraper{% endblock %}
+{% block breadcrumb %}web-scraper{% endblock %}
+{% block page_title %}Web Scraper{% endblock %}
+{% block nav_scraper %}active{% endblock %}
+
+{% block content %}
+<div class="grid-2 mb-24">
+
+  <!-- Trigger Scrape Card -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title"><i class="fa-solid fa-spider"></i> Trigger Scrape</div>
+    </div>
+    <div class="card-body">
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <div>
+          <label style="font-size:12px;color:var(--text-2);display:block;margin-bottom:6px;">Target URL</label>
+          <input id="scrapeUrl" type="url" value="https://en.wikipedia.org/wiki/List_of_countries_by_population_(United_Nations)" style="width:100%;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:9px 12px;color:var(--text-0);font-family:var(--font-mono);font-size:12px;outline:none;">
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--text-2);display:block;margin-bottom:6px;">Data Type</label>
+          <select id="scrapeType" style="width:100%;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:9px 12px;color:var(--text-0);font-size:13px;outline:none;">
+            <option value="table">HTML Table</option>
+            <option value="article">Article / Text</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--text-2);display:block;margin-bottom:6px;">CSS Selector (optional)</label>
+          <input id="scrapeCss" type="text" placeholder="e.g. table.wikitable" style="width:100%;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:9px 12px;color:var(--text-0);font-family:var(--font-mono);font-size:12px;outline:none;">
+        </div>
+        <button onclick="triggerScrape()" class="topbar-btn primary" style="justify-content:center;padding:10px;">
+          <i class="fa-solid fa-spider"></i> Start Scraping
+        </button>
+      </div>
+
+      <!-- Quick targets -->
+      <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);">
+        <div style="font-size:11px;color:var(--text-2);margin-bottom:10px;text-transform:uppercase;letter-spacing:1px;">Quick Targets</div>
+        <div style="display:flex;flex-direction:column;gap:6px;">
+          <button onclick="setUrl('https://en.wikipedia.org/wiki/List_of_countries_by_population_(United_Nations)')" style="background:var(--bg-1);border:1px solid var(--border);border-radius:var(--radius-sm);padding:7px 12px;color:var(--text-1);font-size:12px;text-align:left;cursor:pointer;">
+            <i class="fa-solid fa-globe" style="color:var(--accent);margin-right:6px;"></i> Wikipedia — Country Populations
+          </button>
+          <button onclick="setUrl('https://news.ycombinator.com/')" style="background:var(--bg-1);border:1px solid var(--border);border-radius:var(--radius-sm);padding:7px 12px;color:var(--text-1);font-size:12px;text-align:left;cursor:pointer;">
+            <i class="fa-brands fa-y-combinator" style="color:var(--amber);margin-right:6px;"></i> Hacker News — Top Stories
+          </button>
+          <button onclick="setUrl('https://en.wikipedia.org/wiki/List_of_largest_companies_by_revenue')" style="background:var(--bg-1);border:1px solid var(--border);border-radius:var(--radius-sm);padding:7px 12px;color:var(--text-1);font-size:12px;text-align:left;cursor:pointer;">
+            <i class="fa-solid fa-building" style="color:var(--purple);margin-right:6px;"></i> Wikipedia — Top Companies
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scraped Data Preview -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title"><i class="fa-solid fa-database"></i> Recent Scraped Data</div>
+      <button class="topbar-btn" onclick="loadScrapedData()"><i class="fa-solid fa-rotate"></i></button>
+    </div>
+    <div style="padding:0;max-height:420px;overflow-y:auto;">
+      <table class="data-table">
+        <thead><tr><th>Title</th><th>Rows</th><th>Status</th><th>Date</th></tr></thead>
+        <tbody id="scrapedBody">
+          <tr><td colspan="4" style="text-align:center;padding:40px;color:var(--text-2);"><i class="fa-solid fa-spinner fa-spin"></i></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Scrape Log -->
+<div class="card">
+  <div class="card-header">
+    <div class="card-title"><i class="fa-solid fa-terminal"></i> Scraper Output</div>
+    <button onclick="document.getElementById('scrapeLog').textContent=''" class="topbar-btn" style="font-size:11px;">Clear</button>
+  </div>
+  <div class="card-body">
+    <div id="scrapeLog" class="log-stream" style="min-height:160px;">Waiting for scrape job...<br>Scraped data will be used as pytest fixtures automatically.</div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function setUrl(url) {
+  document.getElementById('scrapeUrl').value = url;
+}
+
+async function triggerScrape() {
+  const url = document.getElementById('scrapeUrl').value.trim();
+  const type = document.getElementById('scrapeType').value;
+  const css = document.getElementById('scrapeCss').value.trim();
+  if (!url) { toast('Please enter a URL', 'error'); return; }
+
+  const log = document.getElementById('scrapeLog');
+  log.textContent = `[${new Date().toLocaleTimeString()}] Starting scrape...\nURL: ${url}\nType: ${type}\n`;
+
+  try {
+    const data = await apiFetch('/api/scraper/trigger', {
+      method: 'POST',
+      body: JSON.stringify({ url, data_type: type, css_selector: css }),
+    });
+    log.textContent += `[${new Date().toLocaleTimeString()}] ✅ Task queued: ${data.task_id}\n`;
+    log.textContent += `[${new Date().toLocaleTimeString()}] Scraping in background...\n`;
+    log.textContent += `[${new Date().toLocaleTimeString()}] Check "Scraped Data" page once complete.\n`;
+    toast('Scrape job queued!', 'success');
+    setTimeout(loadScrapedData, 5000);
+  } catch(e) {
+    log.textContent += `[${new Date().toLocaleTimeString()}] ❌ Error: ${e.message}\n`;
+  }
+}
+
+async function loadScrapedData() {
+  try {
+    const data = await apiFetch('/api/scraper/data?page_size=20');
+    const tbody = document.getElementById('scrapedBody');
+    const records = data.results || [];
+    if (!records.length) {
+      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:30px;color:var(--text-2);">No data yet. Trigger a scrape above.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = records.map(r => `
+      <tr>
+        <td style="font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${r.title}">${r.title || r.target}</td>
+        <td><span class="text-mono" style="color:var(--green);">${r.row_count}</span></td>
+        <td><span class="badge ${r.status === 'validated' ? 'passed' : 'pending'}">${r.status}</span></td>
+        <td class="text-muted text-small text-mono">${new Date(r.created_at).toLocaleDateString()}</td>
+      </tr>
+    `).join('');
+  } catch(e) {}
+}
+
+loadScrapedData();
+</script>
+{% endblock %}

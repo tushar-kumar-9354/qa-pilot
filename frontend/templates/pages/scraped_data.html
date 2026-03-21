@@ -1,0 +1,188 @@
+{% extends "base/base.html" %}
+{% block title %}Scraped Data{% endblock %}
+{% block breadcrumb %}scraped-data{% endblock %}
+{% block page_title %}Scraped Data{% endblock %}
+{% block nav_data %}active{% endblock %}
+
+{% block content %}
+<div class="card mb-24">
+  <div class="card-header">
+    <div class="card-title"><i class="fa-solid fa-database"></i> All Scraped Records</div>
+    <a href="/scraper/" class="topbar-btn primary"><i class="fa-solid fa-spider"></i> Scrape More</a>
+  </div>
+  <div style="padding:0;">
+    <table class="data-table">
+      <thead>
+        <tr><th>Title</th><th>Source</th><th>Rows</th><th>Columns</th><th>Status</th><th>Date</th><th>Preview</th></tr>
+      </thead>
+      <tbody id="dataBody">
+        <tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-2);"><i class="fa-solid fa-spinner fa-spin"></i> Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Data Preview Modal -->
+<div id="previewModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:999;align-items:flex-start;justify-content:center;padding:40px 20px;overflow-y:auto;">
+  <div style="background:var(--bg-1);border:1px solid var(--border-accent);border-radius:var(--radius-xl);width:100%;max-width:1000px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:18px 24px;border-bottom:1px solid var(--border);">
+      <div>
+        <div id="modalTitle" style="font-size:15px;font-weight:700;color:var(--text-0);"></div>
+        <div id="modalMeta" style="font-size:12px;color:var(--text-2);margin-top:2px;"></div>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button onclick="downloadCSV()" class="topbar-btn" style="font-size:11px;"><i class="fa-solid fa-download"></i> CSV</button>
+        <button onclick="closeModal()" style="background:none;border:none;color:var(--text-1);cursor:pointer;font-size:22px;padding:0 4px;">×</button>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div style="display:flex;gap:0;border-bottom:1px solid var(--border);">
+      <button onclick="switchTab('table')" id="tab-table" style="padding:10px 20px;background:var(--accent-dim);color:var(--accent);border:none;border-bottom:2px solid var(--accent);cursor:pointer;font-size:13px;font-family:var(--font-ui);">Table View</button>
+      <button onclick="switchTab('json')" id="tab-json" style="padding:10px 20px;background:none;color:var(--text-1);border:none;cursor:pointer;font-size:13px;font-family:var(--font-ui);">JSON View</button>
+      <button onclick="switchTab('pytest')" id="tab-pytest" style="padding:10px 20px;background:none;color:var(--text-1);border:none;cursor:pointer;font-size:13px;font-family:var(--font-ui);">Pytest Fixtures</button>
+    </div>
+
+    <!-- Table View -->
+    <div id="view-table" style="padding:16px;overflow-x:auto;max-height:500px;overflow-y:auto;">
+      <table class="data-table" id="previewTable" style="min-width:600px;"></table>
+    </div>
+
+    <!-- JSON View -->
+    <div id="view-json" style="display:none;padding:16px;">
+      <pre id="jsonView" style="background:var(--bg-0);border:1px solid var(--border);border-radius:var(--radius-md);padding:16px;font-family:var(--font-mono);font-size:12px;color:var(--green);max-height:500px;overflow-y:auto;white-space:pre-wrap;"></pre>
+    </div>
+
+    <!-- Pytest Fixtures -->
+    <div id="view-pytest" style="display:none;padding:16px;">
+      <div style="margin-bottom:10px;font-size:12px;color:var(--text-2);">Copy this into your pytest test file — real scraped data as parametrize fixtures:</div>
+      <pre id="pytestView" style="background:var(--bg-0);border:1px solid var(--border);border-radius:var(--radius-md);padding:16px;font-family:var(--font-mono);font-size:12px;color:var(--purple);max-height:500px;overflow-y:auto;white-space:pre-wrap;"></pre>
+      <button onclick="copyPytest()" class="topbar-btn primary" style="margin-top:10px;font-size:12px;"><i class="fa-solid fa-copy"></i> Copy Fixtures</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let currentData = null;
+
+async function loadData() {
+  try {
+    const data = await apiFetch('/api/scraper/data?page_size=50');
+    const tbody = document.getElementById('dataBody');
+    const records = data.results || [];
+    if (!records.length) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-2);">No scraped data yet. Go to Web Scraper to collect data.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = records.map(r => `
+      <tr>
+        <td style="font-weight:600;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${r.title}">${r.title || '—'}</td>
+        <td class="text-mono text-small text-muted" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${r.target}</td>
+        <td><span style="color:var(--green);font-family:var(--font-mono);font-weight:600;">${r.row_count}</span></td>
+        <td class="text-mono text-muted">${r.column_count || '—'}</td>
+        <td><span class="badge ${r.status === 'validated' ? 'passed' : 'pending'}">${r.status}</span></td>
+        <td class="text-mono text-small text-muted">${new Date(r.created_at).toLocaleString()}</td>
+        <td>
+          <button onclick="previewData('${r.id}', '${r.title?.replace(/'/g,"\\'")||""}', ${r.row_count}, ${r.column_count})"
+            style="background:var(--accent-dim);color:var(--accent);border:1px solid var(--border-accent);border-radius:var(--radius-sm);padding:4px 10px;font-size:11px;cursor:pointer;font-family:var(--font-ui);">
+            <i class="fa-solid fa-eye"></i> View
+          </button>
+        </td>
+      </tr>
+    `).join('');
+  } catch(e) { console.error(e); }
+}
+
+async function previewData(id, title, rows, cols) {
+  document.getElementById('previewModal').style.display = 'flex';
+  document.getElementById('modalTitle').textContent = title || 'Scraped Data';
+  document.getElementById('modalMeta').textContent = `${rows} rows · ${cols} columns`;
+  document.getElementById('previewTable').innerHTML = '<tr><td style="padding:30px;color:var(--text-2);"><i class="fa-solid fa-spinner fa-spin"></i> Loading data...</td></tr>';
+
+  try {
+    const data = await apiFetch(`/api/scraper/record/${id}`);
+    currentData = data;
+
+    // Table view
+    const rows_data = data.normalized_data || [];
+    if (rows_data.length > 0 && typeof rows_data[0] === 'object') {
+      const headers = Object.keys(rows_data[0]);
+      const table = document.getElementById('previewTable');
+      table.innerHTML = `
+        <thead><tr>${headers.map(h => `<th style="white-space:nowrap;">${h}</th>`).join('')}</tr></thead>
+        <tbody>${rows_data.slice(0,100).map(row =>
+          `<tr>${headers.map(h => `<td style="white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis;">${row[h] ?? ''}</td>`).join('')}</tr>`
+        ).join('')}</tbody>
+      `;
+    } else {
+      document.getElementById('previewTable').innerHTML = '<tr><td style="padding:20px;color:var(--text-2);">No table data available</td></tr>';
+    }
+
+    // JSON view
+    document.getElementById('jsonView').textContent = JSON.stringify(data.normalized_data?.slice(0,20) || data.raw_data, null, 2);
+
+    // Pytest fixtures
+    const fixtures = (data.normalized_data || []).slice(0, 10);
+    document.getElementById('pytestView').textContent =
+`import pytest
+
+# Real scraped data from: ${data.source_url}
+# Use with @pytest.mark.parametrize to test with real-world data
+
+SCRAPED_DATA = ${JSON.stringify(fixtures, null, 4)}
+
+@pytest.mark.parametrize("row", SCRAPED_DATA)
+def test_scraped_data_is_valid(row):
+    """Each scraped record must have non-empty values."""
+    assert row, "Row should not be empty"
+    assert any(v for v in row.values()), "Row should have at least one non-empty value"
+`;
+
+  } catch(e) {
+    document.getElementById('previewTable').innerHTML = `<tr><td style="color:var(--red);padding:20px;">Error: ${e.message}</td></tr>`;
+  }
+}
+
+function switchTab(tab) {
+  ['table','json','pytest'].forEach(t => {
+    document.getElementById(`view-${t}`).style.display = t === tab ? 'block' : 'none';
+    const btn = document.getElementById(`tab-${t}`);
+    if (t === tab) {
+      btn.style.background = 'var(--accent-dim)';
+      btn.style.color = 'var(--accent)';
+      btn.style.borderBottom = '2px solid var(--accent)';
+    } else {
+      btn.style.background = 'none';
+      btn.style.color = 'var(--text-1)';
+      btn.style.borderBottom = 'none';
+    }
+  });
+}
+
+function closeModal() {
+  document.getElementById('previewModal').style.display = 'none';
+}
+
+function downloadCSV() {
+  if (!currentData?.normalized_data?.length) return;
+  const rows = currentData.normalized_data;
+  const headers = Object.keys(rows[0]);
+  const csv = [headers.join(','), ...rows.map(r => headers.map(h => `"${r[h] ?? ''}"`).join(','))].join('\n');
+  const blob = new Blob([csv], {type: 'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'scraped_data.csv';
+  a.click();
+  toast('CSV downloaded!', 'success');
+}
+
+function copyPytest() {
+  navigator.clipboard.writeText(document.getElementById('pytestView').textContent);
+  toast('Pytest fixtures copied!', 'success');
+}
+
+loadData();
+</script>
+{% endblock %}

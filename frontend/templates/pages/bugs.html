@@ -1,0 +1,19 @@
+{% extends "base/base.html" %}
+{% block title %}Bug Reports{% endblock %}
+{% block breadcrumb %}bug-reports{% endblock %}
+{% block page_title %}Bug Reports{% endblock %}
+{% block nav_bugs %}active{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <div class="card-title"><i class="fa-solid fa-bug"></i> Bug Reports</div>
+  </div>
+  <div class="card-body">
+    <div class="empty-state">
+      <i class="fa-solid fa-bug-slash"></i>
+      <p style="font-size:16px;font-weight:600;margin-bottom:8px;">No bugs! 🎉</p>
+      <p>Bug reports are auto-created when test runs fail.<br>Run your test suites to populate this page.</p>
+    </div>
+  </div>
+</div>
+{% endblock %}

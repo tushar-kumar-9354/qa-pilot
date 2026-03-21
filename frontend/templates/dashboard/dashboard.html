@@ -1,0 +1,306 @@
+{% extends "base/base.html" %}
+
+{% block title %}Dashboard{% endblock %}
+{% block breadcrumb %}dashboard{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+{% block nav_dashboard %}active{% endblock %}
+
+{% block topbar_actions %}
+<button class="topbar-btn primary" onclick="triggerRun()">
+  <i class="fa-solid fa-play"></i> Run All Suites
+</button>
+{% endblock %}
+
+{% block content %}
+
+<!-- ── Stats Row ─────────────────────────────────────────── -->
+<div class="stats-grid" id="statsGrid">
+  <div class="stat-card accent">
+    <div class="stat-icon accent"><i class="fa-solid fa-folder-tree"></i></div>
+    <div class="stat-value" id="stat-suites">—</div>
+    <div class="stat-label">Test Suites</div>
+  </div>
+  <div class="stat-card green">
+    <div class="stat-icon green"><i class="fa-solid fa-circle-check"></i></div>
+    <div class="stat-value" id="stat-passes">—</div>
+    <div class="stat-label">Passed Today</div>
+  </div>
+  <div class="stat-card red">
+    <div class="stat-icon red"><i class="fa-solid fa-circle-xmark"></i></div>
+    <div class="stat-value" id="stat-bugs">—</div>
+    <div class="stat-label">Open Bugs</div>
+  </div>
+  <div class="stat-card amber">
+    <div class="stat-icon amber"><i class="fa-solid fa-spider"></i></div>
+    <div class="stat-value" id="stat-scraped">—</div>
+    <div class="stat-label">Scraped Records</div>
+  </div>
+  <div class="stat-card purple">
+    <div class="stat-icon purple"><i class="fa-solid fa-robot"></i></div>
+    <div class="stat-value" id="stat-cases">—</div>
+    <div class="stat-label">Test Cases</div>
+  </div>
+  <div class="stat-card green">
+    <div class="stat-icon green"><i class="fa-solid fa-play-circle"></i></div>
+    <div class="stat-value" id="stat-runs">—</div>
+    <div class="stat-label">Runs Today</div>
+  </div>
+</div>
+
+<!-- ── Charts Row ────────────────────────────────────────── -->
+<div class="grid-2 mb-24">
+
+  <!-- Pass Rate Trend -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">
+        <i class="fa-solid fa-chart-line"></i> 7-Day Pass Rate Trend
+      </div>
+      <span class="badge running">Live</span>
+    </div>
+    <div class="card-body">
+      <div style="position:relative;height:220px;">
+        <canvas id="trendChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Test Type Distribution -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">
+        <i class="fa-solid fa-chart-pie"></i> Test Distribution
+      </div>
+    </div>
+    <div class="card-body">
+      <div style="position:relative;height:220px;display:flex;align-items:center;justify-content:center;">
+        <canvas id="typeChart"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Bottom Row ────────────────────────────────────────── -->
+<div class="grid-2">
+
+  <!-- Recent Failures -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">
+        <i class="fa-solid fa-triangle-exclamation"></i> Recent Failures
+      </div>
+      <a href="/runs/?status=failed" class="topbar-btn" style="font-size:11px;padding:4px 10px;">View all</a>
+    </div>
+    <div class="card-body" style="padding:0;">
+      <table class="data-table" id="failuresTable">
+        <thead>
+          <tr>
+            <th>Suite</th>
+            <th>Failed</th>
+            <th>Total</th>
+            <th>Time</th>
+          </tr>
+        </thead>
+        <tbody id="failureRows">
+          <tr><td colspan="4" style="text-align:center;padding:30px;color:var(--text-2);">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- AI Chat Snippet -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">
+        <i class="fa-solid fa-robot"></i> AI Assistant
+      </div>
+      <a href="/agents/chat/" class="topbar-btn" style="font-size:11px;padding:4px 10px;">Full chat</a>
+    </div>
+    <div class="chat-container">
+      <div class="chat-messages" id="chatMessages">
+        <div class="chat-msg ai">
+          <div class="chat-avatar ai"><i class="fa-solid fa-robot"></i></div>
+          <div class="chat-bubble">
+            Hi! I'm QA-Pilot. Ask me about test failures, request test generation, or get help with Selenium selectors.
+          </div>
+        </div>
+      </div>
+      <div class="chat-input-row">
+        <input type="text" class="chat-input" id="chatInput" placeholder="Ask about your tests..." onkeydown="if(event.key==='Enter') sendChat()" />
+        <button class="chat-send-btn" onclick="sendChat()"><i class="fa-solid fa-paper-plane"></i></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let trendChart, typeChart;
+
+// ── Load Dashboard Stats ────────────────────────────────
+async function loadStats() {
+  try {
+    const data = await apiFetch('/api/dashboard/stats');
+    const t = data.totals;
+
+    document.getElementById('stat-suites').textContent = t.suites;
+    document.getElementById('stat-passes').textContent = t.runs_today;
+    document.getElementById('stat-bugs').textContent = t.open_bugs;
+    document.getElementById('stat-scraped').textContent = t.scraped_records;
+    document.getElementById('stat-cases').textContent = t.cases;
+    document.getElementById('stat-runs').textContent = t.runs_today;
+
+    // Trend chart
+    const labels = data.trend.map(d => {
+      const dt = new Date(d.date);
+      return dt.toLocaleDateString('en', { weekday: 'short' });
+    });
+    const rates = data.trend.map(d => d.pass_rate);
+
+    if (trendChart) trendChart.destroy();
+    trendChart = new Chart(document.getElementById('trendChart'), {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Pass Rate %',
+          data: rates,
+          borderColor: '#00d9ff',
+          backgroundColor: 'rgba(0,217,255,0.07)',
+          borderWidth: 2,
+          pointBackgroundColor: '#00d9ff',
+          pointRadius: 4,
+          tension: 0.4,
+          fill: true,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+        },
+        scales: {
+          y: {
+            min: 0, max: 100,
+            grid: { color: 'rgba(255,255,255,0.04)' },
+            ticks: { color: '#484f58', font: { family: 'JetBrains Mono', size: 11 }, callback: v => v + '%' },
+          },
+          x: {
+            grid: { display: false },
+            ticks: { color: '#484f58', font: { family: 'JetBrains Mono', size: 11 } },
+          }
+        }
+      }
+    });
+
+    // Type chart (static distribution example)
+    if (typeChart) typeChart.destroy();
+    typeChart = new Chart(document.getElementById('typeChart'), {
+      type: 'doughnut',
+      data: {
+        labels: ['Unit', 'Integration', 'E2E', 'API', 'Performance'],
+        datasets: [{
+          data: [40, 25, 15, 15, 5],
+          backgroundColor: ['#00d9ff', '#39d353', '#a855f7', '#ffa502', '#ff4757'],
+          borderWidth: 0,
+          hoverOffset: 6,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '68%',
+        plugins: {
+          legend: {
+            position: 'right',
+            labels: {
+              color: '#8b949e',
+              font: { family: 'JetBrains Mono', size: 11 },
+              padding: 14,
+              usePointStyle: true,
+              pointStyleWidth: 8,
+            }
+          }
+        }
+      }
+    });
+
+    // Failures table
+    const tbody = document.getElementById('failureRows');
+    if (data.recent_failures.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:30px;color:var(--text-2);"><i class="fa-solid fa-circle-check" style="color:var(--green);margin-right:6px;"></i>No recent failures</td></tr>';
+    } else {
+      tbody.innerHTML = data.recent_failures.map(f => `
+        <tr>
+          <td style="font-weight:600;">${f.suite}</td>
+          <td><span class="badge failed">${f.failed}</span></td>
+          <td class="text-muted text-mono">${f.total}</td>
+          <td class="text-muted text-small text-mono">${new Date(f.created_at).toLocaleTimeString()}</td>
+        </tr>
+      `).join('');
+    }
+  } catch (e) {
+    console.error('Stats load failed:', e);
+  }
+}
+
+// ── AI Chat ─────────────────────────────────────────────
+async function sendChat() {
+  const input = document.getElementById('chatInput');
+  const message = input.value.trim();
+  if (!message) return;
+
+  input.value = '';
+  appendMsg('user', message);
+
+  const typing = appendMsg('ai', '<i class="fa-solid fa-ellipsis" style="animation:pulse-dot 1s infinite"></i>');
+
+  try {
+    const data = await apiFetch('/api/agents/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message }),
+    });
+    typing.querySelector('.chat-bubble').textContent = data.response;
+  } catch {
+    typing.querySelector('.chat-bubble').textContent = 'Error reaching AI. Check your Gemini API key.';
+  }
+}
+
+function appendMsg(role, text) {
+  const container = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.className = `chat-msg ${role}`;
+  div.innerHTML = `
+    <div class="chat-avatar ${role}">${role === 'ai' ? '<i class="fa-solid fa-robot"></i>' : '👤'}</div>
+    <div class="chat-bubble">${text}</div>
+  `;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+  return div;
+}
+
+// ── Trigger All Runs ─────────────────────────────────────
+async function triggerRun() {
+  toast('Triggering all test suites...', 'info');
+  const suites = await apiFetch('/api/suites');
+  if (!suites.results.length) {
+    toast('No active suites found', 'error');
+    return;
+  }
+  for (const suite of suites.results) {
+    await apiFetch('/api/runs/trigger', {
+      method: 'POST',
+      body: JSON.stringify({ suite_id: suite.id }),
+    });
+  }
+  toast(`${suites.results.length} suite(s) queued!`, 'success');
+}
+
+// ── Init ─────────────────────────────────────────────────
+loadStats();
+setInterval(loadStats, 30000); // Refresh every 30s
+</script>
+{% endblock %}

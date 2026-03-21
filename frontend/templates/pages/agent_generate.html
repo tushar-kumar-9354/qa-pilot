@@ -1,0 +1,178 @@
+{% extends "base/base.html" %}
+{% block title %}AI Test Generator{% endblock %}
+{% block breadcrumb %}ai / test-generator{% endblock %}
+{% block page_title %}AI Test Generator{% endblock %}
+{% block nav_generate %}active{% endblock %}
+
+{% block content %}
+<div class="grid-2">
+
+  <!-- Input Panel -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title"><i class="fa-solid fa-wand-magic-sparkles"></i> Generate Tests with Gemini AI</div>
+      <span class="badge ai">Gemini 1.5 Flash</span>
+    </div>
+    <div class="card-body">
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div>
+          <label style="font-size:12px;color:var(--text-2);display:block;margin-bottom:6px;">Feature Description <span style="color:var(--red);">*</span></label>
+          <textarea id="featureDesc" rows="4" placeholder="Describe what you want to test...&#10;e.g. 'User login endpoint that accepts email and password, returns JWT token, and validates credentials against PostgreSQL'" style="width:100%;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;color:var(--text-0);font-family:var(--font-ui);font-size:13px;outline:none;resize:vertical;line-height:1.6;"></textarea>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div>
+            <label style="font-size:12px;color:var(--text-2);display:block;margin-bottom:6px;">Test Type</label>
+            <select id="testType" style="width:100%;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:9px 12px;color:var(--text-0);font-size:13px;outline:none;">
+              <option value="unit">Unit Tests</option>
+              <option value="integration">Integration Tests</option>
+              <option value="api">API Tests</option>
+              <option value="e2e">E2E Tests</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--text-2);display:block;margin-bottom:6px;">Number of Tests</label>
+            <select id="numTests" style="width:100%;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:9px 12px;color:var(--text-0);font-size:13px;outline:none;">
+              <option value="3">3 tests</option>
+              <option value="5" selected>5 tests</option>
+              <option value="8">8 tests</option>
+              <option value="10">10 tests</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--purple-dim);border:1px solid rgba(168,85,247,0.2);border-radius:var(--radius-sm);">
+          <input type="checkbox" id="useScraped" checked style="width:14px;height:14px;accent-color:var(--purple);">
+          <label for="useScraped" style="font-size:13px;color:var(--text-0);cursor:pointer;">Use scraped data as test fixtures <span style="color:var(--purple);font-size:11px;">(parametrize with real data)</span></label>
+        </div>
+
+        <!-- Quick prompts -->
+        <div>
+          <div style="font-size:11px;color:var(--text-2);margin-bottom:8px;text-transform:uppercase;letter-spacing:1px;">Quick Prompts</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;">
+            <button onclick="setPrompt('REST API endpoint with JWT authentication and role-based access')" class="topbar-btn" style="font-size:11px;padding:4px 8px;">JWT Auth API</button>
+            <button onclick="setPrompt('Selenium E2E test for user login form with valid and invalid credentials')" class="topbar-btn" style="font-size:11px;padding:4px 8px;">Login Form E2E</button>
+            <button onclick="setPrompt('Django model with custom validation, save method and property methods')" class="topbar-btn" style="font-size:11px;padding:4px 8px;">Django Model</button>
+            <button onclick="setPrompt('Web scraper function that extracts table data and handles pagination')" class="topbar-btn" style="font-size:11px;padding:4px 8px;">Scraper Function</button>
+          </div>
+        </div>
+
+        <button onclick="generateTests()" class="topbar-btn primary" style="justify-content:center;padding:12px;font-size:14px;" id="generateBtn">
+          <i class="fa-solid fa-wand-magic-sparkles"></i> Generate with Gemini AI
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Output Panel -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title"><i class="fa-solid fa-code"></i> Generated Tests</div>
+      <div style="display:flex;gap:6px;" id="outputActions" style="display:none;">
+        <button onclick="copyCode()" class="topbar-btn" style="font-size:11px;padding:4px 10px;"><i class="fa-solid fa-copy"></i> Copy</button>
+        <button onclick="downloadCode()" class="topbar-btn" style="font-size:11px;padding:4px 10px;"><i class="fa-solid fa-download"></i> Download</button>
+      </div>
+    </div>
+    <div class="card-body" style="padding:0;">
+      <div id="generatedOutput" style="min-height:460px;">
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:460px;color:var(--text-2);gap:12px;">
+          <i class="fa-solid fa-wand-magic-sparkles" style="font-size:36px;color:var(--purple);opacity:0.5;"></i>
+          <p style="font-size:14px;">Generated pytest code will appear here</p>
+          <p style="font-size:12px;">AI will use your scraped data as parametrize fixtures</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Test Names Summary -->
+<div id="testSummary" style="display:none;margin-top:20px;" class="card">
+  <div class="card-header">
+    <div class="card-title"><i class="fa-solid fa-list-check"></i> Generated Test Functions</div>
+    <span id="testCount" class="badge ai"></span>
+  </div>
+  <div class="card-body" id="testNamesList"></div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let generatedCode = '';
+
+function setPrompt(text) {
+  document.getElementById('featureDesc').value = text;
+}
+
+async function generateTests() {
+  const desc = document.getElementById('featureDesc').value.trim();
+  if (desc.length < 10) { toast('Please enter a feature description (min 10 chars)', 'error'); return; }
+
+  const btn = document.getElementById('generateBtn');
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generating with Gemini...';
+  btn.disabled = true;
+
+  const output = document.getElementById('generatedOutput');
+  output.innerHTML = `
+    <div style="padding:20px;">
+      <div class="log-stream" style="min-height:100px;color:var(--purple);">
+        <span style="color:var(--text-2);">[AI]</span> Connecting to Gemini 1.5 Flash...<br>
+        <span style="color:var(--text-2);">[AI]</span> Analyzing feature: ${desc.substring(0,60)}...<br>
+        <span style="color:var(--text-2);">[AI]</span> Loading scraped fixtures...<br>
+        <span style="color:var(--text-2);">[AI]</span> Writing pytest code...
+      </div>
+    </div>`;
+
+  try {
+    const data = await apiFetch('/api/agents/generate-tests', {
+      method: 'POST',
+      body: JSON.stringify({
+        feature_description: desc,
+        test_type: document.getElementById('testType').value,
+        num_tests: parseInt(document.getElementById('numTests').value),
+        use_scraped_data: document.getElementById('useScraped').checked,
+      }),
+    });
+
+    generatedCode = data.code || '';
+    output.innerHTML = `<pre style="margin:0;padding:20px;font-family:var(--font-mono);font-size:12.5px;color:var(--green);line-height:1.7;overflow-x:auto;white-space:pre-wrap;">${escapeHtml(generatedCode)}</pre>`;
+    document.getElementById('outputActions').style.display = 'flex';
+
+    // Show test names
+    if (data.test_names?.length) {
+      document.getElementById('testSummary').style.display = 'block';
+      document.getElementById('testCount').textContent = `${data.test_names.length} tests`;
+      document.getElementById('testNamesList').innerHTML = data.test_names.map(name =>
+        `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);">
+          <i class="fa-solid fa-flask" style="color:var(--purple);font-size:11px;"></i>
+          <span class="text-mono" style="font-size:13px;color:var(--text-0);">${name}</span>
+        </div>`
+      ).join('');
+    }
+
+    toast(`${data.test_names?.length || 0} tests generated!`, 'success');
+  } catch(e) {
+    output.innerHTML = `<div style="padding:20px;color:var(--red);">Error: ${e.message}<br><br>Make sure your GEMINI_API_KEY is set in .env</div>`;
+    toast('Generation failed — check Gemini API key in .env', 'error');
+  } finally {
+    btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> Generate with Gemini AI';
+    btn.disabled = false;
+  }
+}
+
+function copyCode() {
+  navigator.clipboard.writeText(generatedCode);
+  toast('Code copied!', 'success');
+}
+
+function downloadCode() {
+  const blob = new Blob([generatedCode], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'test_generated.py';
+  a.click();
+  toast('Downloaded test_generated.py', 'success');
+}
+
+function escapeHtml(text) {
+  return text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+</script>
+{% endblock %}

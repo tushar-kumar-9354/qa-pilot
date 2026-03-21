@@ -1,0 +1,162 @@
+{% extends "base/base.html" %}
+{% block title %}AI Assistant{% endblock %}
+{% block breadcrumb %}ai / assistant{% endblock %}
+{% block page_title %}AI Assistant{% endblock %}
+{% block nav_chat %}active{% endblock %}
+
+{% block content %}
+<div style="display:grid;grid-template-columns:1fr 300px;gap:20px;height:calc(100vh - 140px);">
+
+  <!-- Chat Panel -->
+  <div class="card" style="display:flex;flex-direction:column;height:100%;">
+    <div class="card-header">
+      <div class="card-title"><i class="fa-solid fa-robot"></i> QA-Pilot AI Assistant <span class="badge ai" style="margin-left:4px;">Gemini</span></div>
+      <button onclick="clearChat()" class="topbar-btn" style="font-size:11px;"><i class="fa-solid fa-trash"></i> Clear</button>
+    </div>
+
+    <div id="chatMessages" style="flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:14px;">
+      <div class="chat-msg ai">
+        <div class="chat-avatar ai"><i class="fa-solid fa-robot"></i></div>
+        <div class="chat-bubble">
+          👋 I'm QA-Pilot, your AI automation assistant powered by Gemini.<br><br>
+          I can help you with:<br>
+          • Analyzing test failures and finding root causes<br>
+          • Writing pytest tests and Selenium scripts<br>
+          • Explaining error messages and stack traces<br>
+          • Reviewing your test strategy<br>
+          • Answering any QA automation question<br><br>
+          What can I help you with today?
+        </div>
+      </div>
+    </div>
+
+    <div style="padding:16px;border-top:1px solid var(--border);">
+      <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
+        <button onclick="quickSend('Why would a Selenium test fail with StaleElementReferenceException?')" class="topbar-btn" style="font-size:11px;padding:4px 8px;">StaleElement error</button>
+        <button onclick="quickSend('How do I write a pytest fixture for database setup and teardown?')" class="topbar-btn" style="font-size:11px;padding:4px 8px;">DB fixture</button>
+        <button onclick="quickSend('What is the Page Object Model pattern in Selenium?')" class="topbar-btn" style="font-size:11px;padding:4px 8px;">POM pattern</button>
+        <button onclick="quickSend('How do I handle dynamic XPath selectors in Selenium?')" class="topbar-btn" style="font-size:11px;padding:4px 8px;">Dynamic XPath</button>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <textarea id="chatInput" rows="2" placeholder="Ask anything about QA automation, test failures, Selenium, pytest..." style="flex:1;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;color:var(--text-0);font-family:var(--font-ui);font-size:13px;outline:none;resize:none;line-height:1.5;" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
+        <button onclick="sendChat()" class="chat-send-btn" style="height:auto;padding:10px 18px;"><i class="fa-solid fa-paper-plane"></i></button>
+      </div>
+      <div style="font-size:11px;color:var(--text-2);margin-top:6px;">Press Enter to send · Shift+Enter for new line</div>
+    </div>
+  </div>
+
+  <!-- Context Panel -->
+  <div style="display:flex;flex-direction:column;gap:16px;">
+    <div class="card">
+      <div class="card-header"><div class="card-title" style="font-size:13px;"><i class="fa-solid fa-circle-info"></i> Context</div></div>
+      <div class="card-body" style="padding:14px;">
+        <div style="font-size:12px;color:var(--text-2);margin-bottom:10px;">Add context to help AI give better answers</div>
+        <textarea id="contextInput" rows="6" placeholder="Paste stack trace, test code, or error message here..." style="width:100%;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 10px;color:var(--text-0);font-family:var(--font-mono);font-size:11px;outline:none;resize:vertical;"></textarea>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><div class="card-title" style="font-size:13px;"><i class="fa-solid fa-clock-rotate-left"></i> History</div></div>
+      <div id="historyPanel" style="padding:14px;max-height:200px;overflow-y:auto;">
+        <div style="font-size:12px;color:var(--text-2);">Chat history will appear here</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><div class="card-title" style="font-size:13px;"><i class="fa-solid fa-lightbulb"></i> Tips</div></div>
+      <div style="padding:14px;font-size:12px;color:var(--text-2);line-height:1.7;">
+        • Paste full stack traces for best analysis<br>
+        • Mention your test framework (pytest/unittest)<br>
+        • Share the failing test code<br>
+        • Ask for code examples — AI writes real code
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let history = [];
+
+async function sendChat() {
+  const input = document.getElementById('chatInput');
+  const contextEl = document.getElementById('contextInput');
+  const message = input.value.trim();
+  if (!message) return;
+
+  input.value = '';
+  appendMsg('user', message);
+  history.push({ role: 'user', text: message });
+  updateHistory();
+
+  const context = contextEl.value.trim() ? { context: contextEl.value } : null;
+  const typing = appendTyping();
+
+  try {
+    const data = await apiFetch('/api/agents/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message, ...(context || {}) }),
+    });
+    typing.remove();
+    const response = data.response || 'No response received.';
+    appendMsg('ai', formatResponse(response));
+    history.push({ role: 'ai', text: response.substring(0, 80) + '...' });
+    updateHistory();
+  } catch(e) {
+    typing.remove();
+    appendMsg('ai', '❌ Error connecting to AI. Check your GEMINI_API_KEY in .env file.');
+  }
+}
+
+function quickSend(text) {
+  document.getElementById('chatInput').value = text;
+  sendChat();
+}
+
+function appendMsg(role, html) {
+  const container = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.className = `chat-msg ${role}`;
+  div.innerHTML = `
+    <div class="chat-avatar ${role}">${role === 'ai' ? '<i class="fa-solid fa-robot"></i>' : '<i class="fa-solid fa-user"></i>'}</div>
+    <div class="chat-bubble">${html}</div>`;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+  return div;
+}
+
+function appendTyping() {
+  return appendMsg('ai', '<i class="fa-solid fa-ellipsis" style="animation:pulse-dot 1s infinite;color:var(--accent);"></i> Thinking...');
+}
+
+function formatResponse(text) {
+  // Format code blocks
+  return text
+    .replace(/```(\w+)?\n([\s\S]*?)```/g, '<pre style="background:var(--bg-0);padding:10px;border-radius:6px;font-family:var(--font-mono);font-size:12px;overflow-x:auto;margin:8px 0;">$2</pre>')
+    .replace(/`([^`]+)`/g, '<code style="background:var(--bg-0);padding:2px 5px;border-radius:3px;font-family:var(--font-mono);font-size:12px;color:var(--accent);">$1</code>')
+    .replace(/\n/g, '<br>');
+}
+
+function clearChat() {
+  document.getElementById('chatMessages').innerHTML = '';
+  history = [];
+  updateHistory();
+  toast('Chat cleared', 'info');
+}
+
+function updateHistory() {
+  const panel = document.getElementById('historyPanel');
+  if (!history.length) {
+    panel.innerHTML = '<div style="font-size:12px;color:var(--text-2);">No history yet</div>';
+    return;
+  }
+  panel.innerHTML = history.slice(-6).map(h =>
+    `<div style="font-size:11px;padding:4px 0;border-bottom:1px solid var(--border);color:${h.role === 'user' ? 'var(--accent)' : 'var(--text-1)'};">
+      <span style="color:var(--text-2);">${h.role === 'user' ? '→' : '←'}</span> ${h.text.substring(0, 60)}${h.text.length > 60 ? '...' : ''}
+    </div>`
+  ).join('');
+}
+</script>
+{% endblock %}

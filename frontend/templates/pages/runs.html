@@ -1,0 +1,109 @@
+{% extends "base/base.html" %}
+{% block title %}Test Runs{% endblock %}
+{% block breadcrumb %}test-runs{% endblock %}
+{% block page_title %}Test Runs{% endblock %}
+{% block nav_runs %}active{% endblock %}
+
+{% block content %}
+<div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:24px;">
+  <div class="stat-card accent"><div class="stat-icon accent"><i class="fa-solid fa-play-circle"></i></div><div class="stat-value" id="r-total">—</div><div class="stat-label">Total Runs</div></div>
+  <div class="stat-card green"><div class="stat-icon green"><i class="fa-solid fa-circle-check"></i></div><div class="stat-value" id="r-passed">—</div><div class="stat-label">Passed</div></div>
+  <div class="stat-card red"><div class="stat-icon red"><i class="fa-solid fa-circle-xmark"></i></div><div class="stat-value" id="r-failed">—</div><div class="stat-label">Failed</div></div>
+  <div class="stat-card amber"><div class="stat-icon amber"><i class="fa-solid fa-clock"></i></div><div class="stat-value" id="r-running">—</div><div class="stat-label">Running</div></div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <div class="card-title"><i class="fa-solid fa-play-circle"></i> All Test Runs</div>
+    <div style="display:flex;gap:8px;">
+      <select id="statusFilter" onchange="loadRuns()" style="background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:6px 10px;color:var(--text-0);font-size:12px;outline:none;">
+        <option value="">All Status</option>
+        <option value="completed">Completed</option>
+        <option value="running">Running</option>
+        <option value="failed">Failed</option>
+        <option value="pending">Pending</option>
+      </select>
+      <button class="topbar-btn" onclick="loadRuns()"><i class="fa-solid fa-rotate"></i> Refresh</button>
+    </div>
+  </div>
+  <div style="padding:0;">
+    <table class="data-table">
+      <thead>
+        <tr><th>Suite</th><th>Status</th><th>Result</th><th>Passed</th><th>Failed</th><th>Pass Rate</th><th>Duration</th><th>Date</th><th>Logs</th></tr>
+      </thead>
+      <tbody id="runsBody">
+        <tr><td colspan="9" style="text-align:center;padding:40px;color:var(--text-2);"><i class="fa-solid fa-spinner fa-spin"></i> Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Log Modal -->
+<div id="logModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:999;align-items:center;justify-content:center;">
+  <div style="background:var(--bg-1);border:1px solid var(--border);border-radius:var(--radius-xl);width:800px;max-width:95vw;max-height:80vh;display:flex;flex-direction:column;">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border);">
+      <span style="font-size:14px;font-weight:700;color:var(--accent);">Test Run Logs</span>
+      <button onclick="document.getElementById('logModal').style.display='none'" style="background:none;border:none;color:var(--text-1);cursor:pointer;font-size:20px;">×</button>
+    </div>
+    <div id="logContent" class="log-stream" style="flex:1;margin:16px;border-radius:var(--radius-md);overflow-y:auto;"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+async function loadRuns() {
+  const status = document.getElementById('statusFilter').value;
+  const url = `/api/runs?page_size=50${status ? '&status=' + status : ''}`;
+  try {
+    const data = await apiFetch(url);
+    const runs = data.results || [];
+    document.getElementById('r-total').textContent = data.total || 0;
+    document.getElementById('r-passed').textContent = runs.filter(r => r.result === 'passed').length;
+    document.getElementById('r-failed').textContent = runs.filter(r => r.result === 'failed').length;
+    document.getElementById('r-running').textContent = runs.filter(r => r.status === 'running').length;
+
+    const tbody = document.getElementById('runsBody');
+    if (!runs.length) {
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:var(--text-2);">No runs yet. Go to Test Suites and click Run.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = runs.map(r => `
+      <tr>
+        <td style="font-weight:600;">${r.suite_name}</td>
+        <td><span class="badge ${r.status}">${r.status}</span></td>
+        <td>${r.result ? `<span class="badge ${r.result}">${r.result}</span>` : '—'}</td>
+        <td><span style="color:var(--green);font-family:var(--font-mono);">${r.passed}</span></td>
+        <td><span style="color:var(--red);font-family:var(--font-mono);">${r.failed}</span></td>
+        <td>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <div class="progress-bar" style="width:60px;"><div class="progress-fill ${r.pass_rate >= 80 ? 'green' : 'red'}" style="width:${r.pass_rate}%"></div></div>
+            <span class="text-mono text-small">${r.pass_rate}%</span>
+          </div>
+        </td>
+        <td class="text-mono text-small text-muted">${r.duration_seconds ? r.duration_seconds.toFixed(1) + 's' : '—'}</td>
+        <td class="text-mono text-small text-muted">${new Date(r.created_at).toLocaleString()}</td>
+        <td><button onclick="showLogs('${r.id}')" style="background:var(--accent-dim);color:var(--accent);border:1px solid var(--border-accent);border-radius:var(--radius-sm);padding:3px 8px;font-size:11px;cursor:pointer;">Logs</button></td>
+      </tr>
+    `).join('');
+  } catch(e) {}
+}
+
+async function showLogs(runId) {
+  const modal = document.getElementById('logModal');
+  const content = document.getElementById('logContent');
+  modal.style.display = 'flex';
+  content.textContent = 'Loading logs...';
+  try {
+    const data = await apiFetch(`/api/runs?page_size=100`);
+    const run = (data.results || []).find(r => r.id === runId);
+    content.textContent = run?.logs || 'No logs available for this run yet.';
+  } catch(e) {
+    content.textContent = 'Could not load logs.';
+  }
+}
+
+loadRuns();
+setInterval(loadRuns, 15000);
+</script>
+{% endblock %}

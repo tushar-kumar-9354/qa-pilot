@@ -1,0 +1,119 @@
+{% extends "base/base.html" %}
+{% block title %}Self-Healing Selector{% endblock %}
+{% block breadcrumb %}ai / self-healer{% endblock %}
+{% block page_title %}Self-Healing Selector{% endblock %}
+{% block nav_healer %}active{% endblock %}
+
+{% block content %}
+<div style="margin-bottom:16px;padding:14px 18px;background:var(--purple-dim);border:1px solid rgba(168,85,247,0.25);border-radius:var(--radius-lg);font-size:13px;color:var(--text-0);line-height:1.6;">
+  <i class="fa-solid fa-heart-pulse" style="color:var(--purple);margin-right:8px;"></i>
+  <strong>Self-Healing AI:</strong> When a Selenium selector breaks because the UI changed, paste the broken selector + page HTML below. Gemini will automatically find the new correct selector.
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header"><div class="card-title"><i class="fa-solid fa-wrench"></i> Broken Selector Input</div></div>
+    <div class="card-body">
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <div>
+          <label style="font-size:12px;color:var(--text-2);display:block;margin-bottom:6px;">Broken Selector</label>
+          <input id="brokenSelector" type="text" placeholder=".btn-login or //button[@class='old-class']" style="width:100%;background:var(--bg-2);border:1px solid var(--red-dim);border-radius:var(--radius-sm);padding:9px 12px;color:var(--red);font-family:var(--font-mono);font-size:13px;outline:none;">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div>
+            <label style="font-size:12px;color:var(--text-2);display:block;margin-bottom:6px;">Selector Type</label>
+            <select id="selectorType" style="width:100%;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:9px 12px;color:var(--text-0);font-size:13px;outline:none;">
+              <option value="css">CSS Selector</option>
+              <option value="xpath">XPath</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--text-2);display:block;margin-bottom:6px;">Element Description</label>
+            <input id="elemDesc" type="text" placeholder="e.g. Login button" style="width:100%;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:9px 12px;color:var(--text-0);font-family:var(--font-ui);font-size:13px;outline:none;">
+          </div>
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--text-2);display:block;margin-bottom:6px;">Error Message</label>
+          <input id="errorMsg" type="text" placeholder="NoSuchElementException: Unable to locate element" style="width:100%;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:9px 12px;color:var(--text-0);font-family:var(--font-mono);font-size:12px;outline:none;">
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--text-2);display:block;margin-bottom:6px;">Current Page HTML (paste relevant section)</label>
+          <textarea id="pageHtml" rows="8" placeholder='<div class="auth-container">&#10;  <button data-testid="login-btn" class="login-btn">Login</button>&#10;</div>' style="width:100%;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;color:var(--text-0);font-family:var(--font-mono);font-size:12px;outline:none;resize:vertical;line-height:1.6;"></textarea>
+        </div>
+        <button onclick="healSelector()" class="topbar-btn primary" style="justify-content:center;padding:11px;" id="healBtn">
+          <i class="fa-solid fa-heart-pulse"></i> Heal Selector with AI
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><div class="card-title"><i class="fa-solid fa-circle-check"></i> Healed Result</div></div>
+    <div class="card-body" id="healResult">
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:400px;color:var(--text-2);gap:12px;">
+        <i class="fa-solid fa-heart-pulse" style="font-size:36px;color:var(--purple);opacity:0.4;"></i>
+        <p>Paste your broken selector and page HTML, then click Heal</p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+async function healSelector() {
+  const broken = document.getElementById('brokenSelector').value.trim();
+  const type = document.getElementById('selectorType').value;
+  const desc = document.getElementById('elemDesc').value.trim();
+  const html = document.getElementById('pageHtml').value.trim();
+  const error = document.getElementById('errorMsg').value.trim();
+
+  if (!broken || !html) { toast('Broken selector and page HTML are required', 'error'); return; }
+
+  const btn = document.getElementById('healBtn');
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Healing with AI...';
+  btn.disabled = true;
+
+  try {
+    const data = await apiFetch('/api/agents/heal-selector', {
+      method: 'POST',
+      body: JSON.stringify({ broken_selector: broken, selector_type: type, element_description: desc || 'Unknown element', page_html: html, error_message: error }),
+    });
+
+    const conf = Math.round((data.confidence || 0) * 100);
+    document.getElementById('healResult').innerHTML = `
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div style="padding:12px;background:var(--green-dim);border:1px solid rgba(57,211,83,0.3);border-radius:var(--radius-md);">
+          <div style="font-size:11px;color:var(--text-2);margin-bottom:4px;">CONFIDENCE</div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div class="progress-bar" style="flex:1;"><div class="progress-fill green" style="width:${conf}%"></div></div>
+            <span class="text-mono" style="color:var(--green);">${conf}%</span>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--text-2);margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">New CSS Selector</div>
+          <div style="background:var(--bg-0);border:1px solid var(--border-accent);border-radius:var(--radius-sm);padding:10px 14px;font-family:var(--font-mono);font-size:13px;color:var(--accent);">${data.new_css_selector || '—'}</div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--text-2);margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Selenium Code</div>
+          <div style="background:var(--bg-0);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 14px;font-family:var(--font-mono);font-size:12px;color:var(--green);">${data.selenium_code || '—'}</div>
+        </div>
+        <div style="padding:12px;background:var(--amber-dim);border:1px solid rgba(255,165,2,0.2);border-radius:var(--radius-md);">
+          <div style="font-size:11px;color:var(--text-2);margin-bottom:4px;">WHY IT BROKE</div>
+          <div style="font-size:13px;color:var(--text-0);">${data.why_old_broke || '—'}</div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--text-2);margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Robustness Tip</div>
+          <div style="font-size:13px;color:var(--text-1);">${data.robustness_tips || '—'}</div>
+        </div>
+      </div>`;
+    toast('Selector healed!', 'success');
+  } catch(e) {
+    document.getElementById('healResult').innerHTML = `<div style="color:var(--red);padding:20px;">Error: ${e.message}<br><br>Make sure GEMINI_API_KEY is set in .env</div>`;
+  } finally {
+    btn.innerHTML = '<i class="fa-solid fa-heart-pulse"></i> Heal Selector with AI';
+    btn.disabled = false;
+  }
+}
+</script>
+{% endblock %}

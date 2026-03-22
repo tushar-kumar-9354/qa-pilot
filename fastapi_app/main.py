@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from jose import jwt, JWTError
 import structlog
+from asgiref.sync import sync_to_async
 
 logger = structlog.get_logger(__name__)
 
@@ -81,6 +82,105 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
+
+
+# ── Sync to async wrappers for Django ORM ─────────────────────
+@sync_to_async
+def get_test_suites_count(qs):
+    return qs.count()
+
+@sync_to_async
+def get_test_suites_slice(qs, offset, page_size):
+    return list(qs[offset:offset + page_size])
+
+@sync_to_async
+def get_test_suite_by_id(suite_id):
+    from apps.core.models import TestSuite
+    return TestSuite.objects.prefetch_related('test_cases').get(id=suite_id)
+
+@sync_to_async
+def get_test_runs_count(qs):
+    return qs.count()
+
+@sync_to_async
+def get_test_runs_slice(qs, offset, page_size):
+    return list(qs[offset:offset + page_size])
+
+@sync_to_async
+def get_test_suite_by_id_for_trigger(suite_id):
+    from apps.core.models import TestSuite
+    return TestSuite.objects.get(id=suite_id)
+
+@sync_to_async
+def create_test_run(suite, environment):
+    from apps.core.models import TestRun
+    return TestRun.objects.create(
+        suite=suite,
+        status=TestRun.Status.PENDING,
+        environment=environment,
+    )
+
+@sync_to_async
+def update_test_run_task_id(run, task_id):
+    run.celery_task_id = task_id
+    run.save(update_fields=['celery_task_id'])
+
+@sync_to_async
+def get_dashboard_stats_data():
+    from apps.core.models import TestSuite, TestCase, TestRun, BugReport
+    from apps.scraper.models import ScrapedData, ScraperRun
+    from django.utils import timezone
+
+    today = timezone.now().date()
+    
+    total_suites = TestSuite.objects.count()
+    total_cases = TestCase.objects.count()
+    total_runs = TestRun.objects.count()
+    runs_today = TestRun.objects.filter(created_at__date=today).count()
+    open_bugs = BugReport.objects.filter(status='open').count()
+    scraped_records = ScrapedData.objects.count()
+    
+    # Pass rate trend (last 7 days)
+    trend = []
+    for i in range(6, -1, -1):
+        day = today - timedelta(days=i)
+        day_runs = TestRun.objects.filter(created_at__date=day, status='completed')
+        passed = day_runs.filter(result='passed').count()
+        total = day_runs.count()
+        trend.append({
+            "date": day.isoformat(),
+            "runs": total,
+            "pass_rate": round((passed / total * 100), 1) if total > 0 else 0,
+        })
+    
+    # Recent failures
+    recent_failures = list(TestRun.objects.filter(
+        result='failed'
+    ).select_related('suite').order_by('-created_at')[:5])
+    
+    return {
+        "total_suites": total_suites,
+        "total_cases": total_cases,
+        "total_runs": total_runs,
+        "runs_today": runs_today,
+        "open_bugs": open_bugs,
+        "scraped_records": scraped_records,
+        "trend": trend,
+        "recent_failures": recent_failures,
+    }
+
+@sync_to_async
+def get_scraped_data_count(qs):
+    return qs.count()
+
+@sync_to_async
+def get_scraped_data_slice(qs, offset, page_size):
+    return list(qs[offset:offset + page_size])
+
+@sync_to_async
+def get_test_run_for_websocket(run_id):
+    from apps.core.models import TestRun
+    return TestRun.objects.get(id=run_id)
 
 
 # ── Pydantic Schemas ─────────────────────────────────────────
@@ -203,9 +303,9 @@ async def list_suites(
     if search:
         qs = qs.filter(name__icontains=search)
 
-    total = qs.count()
+    total = await get_test_suites_count(qs)
     offset = (page - 1) * page_size
-    suites = qs[offset:offset + page_size]
+    suites = await get_test_suites_slice(qs, offset, page_size)
 
     return {
         "total": total,
@@ -230,10 +330,9 @@ async def list_suites(
 @app.get("/api/suites/{suite_id}", tags=["Test Suites"])
 async def get_suite(suite_id: str):
     """Get a single test suite with its test cases."""
-    from apps.core.models import TestSuite
     try:
-        suite = TestSuite.objects.prefetch_related('test_cases').get(id=suite_id)
-    except TestSuite.DoesNotExist:
+        suite = await get_test_suite_by_id(suite_id)
+    except Exception:
         raise HTTPException(status_code=404, detail="Test suite not found")
 
     return {
@@ -275,8 +374,9 @@ async def list_runs(
     if status:
         qs = qs.filter(status=status)
 
-    total = qs.count()
-    runs = qs[(page - 1) * page_size: page * page_size]
+    total = await get_test_runs_count(qs)
+    offset = (page - 1) * page_size
+    runs = await get_test_runs_slice(qs, offset, page_size)
 
     return {
         "total": total,
@@ -308,19 +408,14 @@ async def trigger_test_run(request: TriggerRunRequest):
     from apps.testrunner.tasks import execute_test_suite_task
 
     try:
-        suite = TestSuite.objects.get(id=request.suite_id)
-    except TestSuite.DoesNotExist:
+        suite = await get_test_suite_by_id_for_trigger(request.suite_id)
+    except Exception:
         raise HTTPException(status_code=404, detail="Suite not found")
 
-    run = TestRun.objects.create(
-        suite=suite,
-        status=TestRun.Status.PENDING,
-        environment=request.environment,
-    )
+    run = await create_test_run(suite, request.environment)
 
     task = execute_test_suite_task.delay(str(run.id))
-    run.celery_task_id = task.id
-    run.save(update_fields=['celery_task_id'])
+    await update_test_run_task_id(run, task.id)
 
     logger.info("api.run.triggered", run_id=str(run.id), suite=suite.name)
 
@@ -331,47 +426,18 @@ async def trigger_test_run(request: TriggerRunRequest):
 @app.get("/api/dashboard/stats", tags=["Dashboard"])
 async def get_dashboard_stats():
     """Aggregate stats for the main dashboard."""
-    from apps.core.models import TestSuite, TestCase, TestRun, BugReport
-    from apps.scraper.models import ScrapedData, ScraperRun
-    from django.utils import timezone
-
-    today = timezone.now().date()
-
-    total_suites = TestSuite.objects.count()
-    total_cases = TestCase.objects.count()
-    total_runs = TestRun.objects.count()
-    runs_today = TestRun.objects.filter(created_at__date=today).count()
-    open_bugs = BugReport.objects.filter(status='open').count()
-    scraped_records = ScrapedData.objects.count()
-
-    # Pass rate trend (last 7 days)
-    trend = []
-    for i in range(6, -1, -1):
-        day = today - timedelta(days=i)
-        day_runs = TestRun.objects.filter(created_at__date=day, status='completed')
-        passed = day_runs.filter(result='passed').count()
-        total = day_runs.count()
-        trend.append({
-            "date": day.isoformat(),
-            "runs": total,
-            "pass_rate": round((passed / total * 100), 1) if total > 0 else 0,
-        })
-
-    # Recent failures
-    recent_failures = TestRun.objects.filter(
-        result='failed'
-    ).select_related('suite').order_by('-created_at')[:5]
-
+    data = await get_dashboard_stats_data()
+    
     return {
         "totals": {
-            "suites": total_suites,
-            "cases": total_cases,
-            "runs": total_runs,
-            "runs_today": runs_today,
-            "open_bugs": open_bugs,
-            "scraped_records": scraped_records,
+            "suites": data["total_suites"],
+            "cases": data["total_cases"],
+            "runs": data["total_runs"],
+            "runs_today": data["runs_today"],
+            "open_bugs": data["open_bugs"],
+            "scraped_records": data["scraped_records"],
         },
-        "trend": trend,
+        "trend": data["trend"],
         "recent_failures": [
             {
                 "id": str(r.id),
@@ -380,7 +446,7 @@ async def get_dashboard_stats():
                 "total": r.total_tests,
                 "created_at": r.created_at.isoformat(),
             }
-            for r in recent_failures
+            for r in data["recent_failures"]
         ],
     }
 
@@ -396,16 +462,18 @@ async def generate_tests(request: GenerateTestsRequest):
     if request.use_scraped_data:
         if request.scraped_data_id:
             try:
-                sd = ScrapedData.objects.get(id=request.scraped_data_id)
-                scraped_data = sd.as_pytest_fixtures()
+                sd = await sync_to_async(ScrapedData.objects.get)(id=request.scraped_data_id)
+                scraped_data = await sync_to_async(sd.as_pytest_fixtures)()
             except ScrapedData.DoesNotExist:
                 pass
         else:
-            latest = ScrapedData.objects.filter(
-                status=ScrapedData.DataStatus.VALIDATED
-            ).order_by('-created_at').first()
+            latest = await sync_to_async(
+                lambda: ScrapedData.objects.filter(
+                    status=ScrapedData.DataStatus.VALIDATED
+                ).order_by('-created_at').first()
+            )()
             if latest:
-                scraped_data = latest.as_pytest_fixtures()
+                scraped_data = await sync_to_async(latest.as_pytest_fixtures)()
 
     agent = TestCaseGeneratorAgent()
     result = agent.generate(
@@ -428,22 +496,23 @@ async def analyze_failure(request: AnalyzeFailureRequest):
     from apps.core.models import TestRun
 
     try:
-        run = TestRun.objects.get(id=request.test_run_id)
+        run = await sync_to_async(TestRun.objects.get)(id=request.test_run_id)
     except TestRun.DoesNotExist:
         raise HTTPException(status_code=404, detail="Test run not found")
 
     agent = FailureAnalyzerAgent()
+    logs = await sync_to_async(lambda: run.logs)()
     result = agent.analyze(
-        logs=run.logs,
+        logs=logs,
         test_name=request.test_name or f"Run #{str(run.id)[:8]}",
     )
 
     # Save AI analysis to bug reports
-    bug = run.bug_reports.first()
+    bug = await sync_to_async(lambda: run.bug_reports.first())()
     if bug and 'root_cause' in result:
         bug.ai_analysis = result.get('root_cause', '') + '\n\n' + result.get('detailed_explanation', '')
         bug.ai_fix_suggestion = result.get('fix_suggestion', '')
-        bug.save(update_fields=['ai_analysis', 'ai_fix_suggestion'])
+        await sync_to_async(bug.save)(update_fields=['ai_analysis', 'ai_fix_suggestion'])
 
     return result
 
@@ -488,8 +557,9 @@ async def list_scraped_data(
     from apps.scraper.models import ScrapedData
 
     qs = ScrapedData.objects.select_related('target').all()
-    total = qs.count()
-    records = qs[(page - 1) * page_size: page * page_size]
+    total = await get_scraped_data_count(qs)
+    offset = (page - 1) * page_size
+    records = await get_scraped_data_slice(qs, offset, page_size)
 
     return {
         "total": total,
@@ -533,16 +603,15 @@ async def websocket_test_logs(websocket: WebSocket, run_id: str):
     await manager.connect(websocket, room=run_id)
     try:
         # Send initial status
-        from apps.core.models import TestRun
         try:
-            run = TestRun.objects.get(id=run_id)
+            run = await get_test_run_for_websocket(run_id)
             await websocket.send_json({
                 "type": "init",
                 "status": run.status,
                 "run_id": run_id,
                 "timestamp": datetime.utcnow().isoformat(),
             })
-        except TestRun.DoesNotExist:
+        except Exception:
             await websocket.send_json({"type": "error", "message": "Run not found"})
 
         # Keep connection alive, relay messages from Celery via Redis pubsub

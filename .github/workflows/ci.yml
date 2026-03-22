@@ -11,7 +11,7 @@ env:
   PYTHONPATH: .
 
 jobs:
-    # ── JOB 1: API Tests (runs FIRST) ───────────────────────────
+  # ── JOB 1: API Tests (runs FIRST) ───────────────────────────
   api-tests:
     name: "API Tests (Django + FastAPI)"
     runs-on: ubuntu-latest
@@ -49,7 +49,7 @@ jobs:
           echo "SCRAPER_DELAY_MAX=3" >> .env
           echo "JWT_ACCESS_TOKEN_LIFETIME_MINUTES=60" >> .env
           echo "JWT_REFRESH_TOKEN_LIFETIME_DAYS=7" >> .env
-      - name: Create complete mocks with Status classes
+      - name: Create complete mocks matching actual models
         run: |
           # Remove all existing admin files
           find apps -name "admin.py" -exec rm -f {} \;
@@ -57,53 +57,79 @@ jobs:
           # Create all apps
           mkdir -p apps/scraper apps/agents apps/testrunner apps/core
           
-          # Scraper models with Status class
+          # Scraper models - MATCH YOUR ACTUAL MODELS EXACTLY
           cat > apps/scraper/models.py << 'PYEOF'
-          from django.db import models
           import uuid
+          from django.db import models
           
-          class ScraperTarget(models.Model):
+          class TimeStampedModel(models.Model):
               id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-              name = models.CharField(max_length=200)
-              url = models.URLField()
-              data_type = models.CharField(max_length=50, default='table', blank=True)
-              requires_js = models.BooleanField(default=False)
-              is_active = models.BooleanField(default=True)
               created_at = models.DateTimeField(auto_now_add=True)
+              updated_at = models.DateTimeField(auto_now=True)
+              class Meta:
+                  abstract = True
           
-          class ScraperRun(models.Model):
+          class ScraperTarget(TimeStampedModel):
+              class DataType(models.TextChoices):
+                  TABLE = 'table', 'HTML Table'
+                  LIST = 'list', 'HTML List'
+                  FORM = 'form', 'HTML Form'
+                  ARTICLE = 'article', 'Article Content'
+                  API = 'api', 'JSON API'
+                  CUSTOM = 'custom', 'Custom Selector'
+          
+              name = models.CharField(max_length=255, unique=True)
+              url = models.URLField(max_length=2000)
+              data_type = models.CharField(max_length=20, choices=DataType.choices, default=DataType.TABLE)
+              css_selector = models.CharField(max_length=500, blank=True)
+              xpath_selector = models.CharField(max_length=500, blank=True)
+              is_active = models.BooleanField(default=True)
+              requires_js = models.BooleanField(default=True)
+              description = models.TextField(blank=True)
+              last_scraped_at = models.DateTimeField(null=True, blank=True)
+              total_records_scraped = models.IntegerField(default=0)
+          
+          class ScraperRun(TimeStampedModel):
               class Status(models.TextChoices):
-                  PENDING = 'pending'
-                  RUNNING = 'running'
-                  COMPLETED = 'completed'
-                  FAILED = 'failed'
-              
-              id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-              target = models.ForeignKey(ScraperTarget, on_delete=models.CASCADE, null=True, blank=True)
-              status = models.CharField(max_length=20, default=Status.PENDING, choices=Status.choices)
-              records_scraped = models.IntegerField(default=0)
-              started_at = models.DateTimeField(auto_now_add=True)
-              completed_at = models.DateTimeField(null=True, blank=True)
+                  PENDING = 'pending', 'Pending'
+                  RUNNING = 'running', 'Running'
+                  SUCCESS = 'success', 'Success'
+                  FAILED = 'failed', 'Failed'
+                  PARTIAL = 'partial', 'Partial Success'
           
-          class ScrapedData(models.Model):
+              target = models.ForeignKey(ScraperTarget, on_delete=models.CASCADE, related_name='runs')
+              status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+              started_at = models.DateTimeField(null=True)
+              completed_at = models.DateTimeField(null=True)
+              records_scraped = models.IntegerField(default=0)
+              error_message = models.TextField(blank=True)
+              celery_task_id = models.CharField(max_length=255, blank=True)
+              triggered_by = models.CharField(max_length=100, default='scheduler')
+          
+          class ScrapedData(TimeStampedModel):
               class DataStatus(models.TextChoices):
-                  PENDING = 'pending'
-                  PROCESSING = 'processing'
-                  VALIDATED = 'validated'
-                  FAILED = 'failed'
-              
-              id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-              target = models.ForeignKey(ScraperTarget, on_delete=models.CASCADE, null=True, blank=True)
+                  RAW = 'raw', 'Raw'
+                  VALIDATED = 'validated', 'Validated'
+                  USED_IN_TESTS = 'used_in_tests', 'Used in Tests'
+                  STALE = 'stale', 'Stale'
+          
+              target = models.ForeignKey(ScraperTarget, on_delete=models.CASCADE, related_name='scraped_data')
+              scraper_run = models.ForeignKey(ScraperRun, on_delete=models.CASCADE, related_name='scraped_records', null=True)
               title = models.CharField(max_length=500, blank=True)
-              source_url = models.URLField()
+              raw_data = models.JSONField()
+              normalized_data = models.JSONField(null=True, blank=True)
+              data_hash = models.CharField(max_length=64, blank=True)
+              status = models.CharField(max_length=20, choices=DataStatus.choices, default=DataStatus.RAW)
               row_count = models.IntegerField(default=0)
               column_count = models.IntegerField(default=0)
-              status = models.CharField(max_length=20, default=DataStatus.PENDING, choices=DataStatus.choices)
-              data = models.JSONField(default=dict)
-              created_at = models.DateTimeField(auto_now_add=True)
+              source_url = models.URLField(max_length=2000, blank=True)
               
               def as_pytest_fixtures(self):
-                  return {"fixtures": "mock_data"}
+                  if not self.normalized_data:
+                      return []
+                  if isinstance(self.normalized_data, list):
+                      return self.normalized_data
+                  return [self.normalized_data]
           PYEOF
           
           # Scraper views
@@ -183,7 +209,7 @@ jobs:
               return {'status': 'completed'}
           PYEOF
           
-          # Core models with Status classes
+          # Core models
           cat > apps/core/models.py << 'PYEOF'
           from django.db import models
           from django.contrib.auth.models import AbstractUser
@@ -216,7 +242,7 @@ jobs:
                   RUNNING = 'running'
                   COMPLETED = 'completed'
                   FAILED = 'failed'
-              
+          
               id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
               suite = models.ForeignKey(TestSuite, on_delete=models.CASCADE)
               status = models.CharField(max_length=20, default=Status.PENDING, choices=Status.choices)
@@ -225,6 +251,9 @@ jobs:
               passed = models.IntegerField(default=0)
               failed = models.IntegerField(default=0)
               pass_rate = models.FloatField(default=0.0)
+              environment = models.CharField(max_length=50, default='development')
+              celery_task_id = models.CharField(max_length=255, blank=True)
+              logs = models.TextField(blank=True)
               created_at = models.DateTimeField(auto_now_add=True)
           
           class BugReport(models.Model):
@@ -281,7 +310,6 @@ jobs:
           
           # Run API tests
           pytest tests/api/test_django_endpoints.py -v --tb=short
-
   # ── JOB 2: Unit Tests ────────────────────────────────────────
   unit-tests:
     name: "Unit Tests"

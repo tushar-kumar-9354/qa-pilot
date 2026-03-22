@@ -92,12 +92,8 @@ jobs:
           echo "JWT_REFRESH_TOKEN_LIFETIME_DAYS=7" >> .env
       - name: Create complete mocks for all apps
         run: |
-          # Create all mock models without conflicting field names
+          # Create scraper models with exact field names expected by admin
           mkdir -p apps/scraper
-          
-          cat > apps/scraper/__init__.py << 'PYEOF'
-          # Mock scraper module
-          PYEOF
           
           cat > apps/scraper/models.py << 'PYEOF'
           from django.db import models
@@ -107,6 +103,8 @@ jobs:
               id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
               name = models.CharField(max_length=200)
               url = models.URLField()
+              data_type = models.CharField(max_length=50, default='table')
+              requires_js = models.BooleanField(default=False)
               is_active = models.BooleanField(default=True)
               created_at = models.DateTimeField(auto_now_add=True)
               
@@ -144,6 +142,10 @@ jobs:
               
               def as_pytest_fixtures(self):
                   return {"fixtures": "mock_data"}
+          PYEOF
+          
+          cat > apps/scraper/__init__.py << 'PYEOF'
+          # Mock scraper module
           PYEOF
           
           cat > apps/scraper/views.py << 'PYEOF'
@@ -209,9 +211,17 @@ jobs:
           from django.contrib import admin
           from .models import ScraperTarget, ScraperRun, ScrapedData
           
-          admin.site.register(ScraperTarget)
-          admin.site.register(ScraperRun)
-          admin.site.register(ScrapedData)
+          @admin.register(ScraperTarget)
+          class ScraperTargetAdmin(admin.ModelAdmin):
+              list_display = ('name', 'url', 'data_type', 'requires_js', 'is_active')
+          
+          @admin.register(ScraperRun)
+          class ScraperRunAdmin(admin.ModelAdmin):
+              list_display = ('id', 'target', 'status', 'records_scraped', 'started_at')
+          
+          @admin.register(ScrapedData)
+          class ScrapedDataAdmin(admin.ModelAdmin):
+              list_display = ('title', 'source_url', 'row_count', 'status')
           PYEOF
           
           # Mock agents
@@ -229,6 +239,10 @@ jobs:
           chat_agent = QAChatAgent()
           PYEOF
           
+          cat > apps/agents/admin.py << 'PYEOF'
+          from django.contrib import admin
+          PYEOF
+          
           # Mock testrunner
           mkdir -p apps/testrunner
           cat > apps/testrunner/__init__.py << 'PYEOF'
@@ -241,6 +255,10 @@ jobs:
           @shared_task
           def execute_test_suite_task(run_id):
               return {'status': 'completed', 'run_id': run_id}
+          PYEOF
+          
+          cat > apps/testrunner/admin.py << 'PYEOF'
+          from django.contrib import admin
           PYEOF
           
           # Mock core models
@@ -330,26 +348,21 @@ jobs:
                   response = self.get_response(request)
                   return response
           PYEOF
-      - name: Remove existing migrations and create fresh ones
+      - name: Setup database and run tests
         run: |
-          # Remove any existing migrations to avoid conflicts
-          rm -rf apps/core/migrations/ apps/scraper/migrations/ apps/testrunner/migrations/ apps/agents/migrations/
-          mkdir -p apps/core/migrations apps/scraper/migrations apps/testrunner/migrations apps/agents/migrations
+          # Remove existing migrations
+          rm -rf apps/*/migrations/
           
-          # Create __init__.py files
-          touch apps/core/migrations/__init__.py
-          touch apps/scraper/migrations/__init__.py
-          touch apps/testrunner/migrations/__init__.py
-          touch apps/agents/migrations/__init__.py
+          # Create fresh migrations
+          python manage.py makemigrations core --noinput
+          python manage.py makemigrations scraper --noinput
+          python manage.py makemigrations testrunner --noinput
+          python manage.py makemigrations agents --noinput
           
-          # Create initial migrations non-interactively
-          python manage.py makemigrations core --noinput --verbosity=0
-          python manage.py makemigrations scraper --noinput --verbosity=0
-          python manage.py makemigrations testrunner --noinput --verbosity=0
-          python manage.py makemigrations agents --noinput --verbosity=0
-          python manage.py migrate --noinput --verbosity=0
-      - name: Debug scraper endpoint
-        run: |
+          # Apply migrations
+          python manage.py migrate --noinput
+          
+          # Test the scraper endpoint
           python manage.py shell << 'EOF'
           import json
           from django.test import Client
@@ -360,11 +373,12 @@ jobs:
                                 content_type='application/json')
           print(f"Response status: {response.status_code}")
           print(f"Response content: {response.content}")
-          assert response.status_code == 200, f"Scraper endpoint failed with status {response.status_code}"
+          assert response.status_code == 200, f"Scraper endpoint failed"
           print("✓ Scraper endpoint works!")
           EOF
-      - name: Run API tests
-        run: pytest tests/api/test_django_endpoints.py -v --tb=short
+          
+          # Run API tests
+          pytest tests/api/test_django_endpoints.py -v --tb=short
   # ── JOB 3: E2E Tests ─────────────────────────────────────────
   e2e-tests:
     name: "E2E Tests (Selenium Chrome)"

@@ -267,7 +267,6 @@ jobs:
             beautifulsoup4==4.12.3 fake-useragent==1.5.1 \
             requests==2.31.0 pandas==2.2.2 factory-boy==3.3.0
 
-
       - name: Create .env
         run: |
           echo "DJANGO_SECRET_KEY=ci-secret-key" > .env

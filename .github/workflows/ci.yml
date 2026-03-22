@@ -90,11 +90,12 @@ jobs:
           echo "SCRAPER_DELAY_MAX=3" >> .env
           echo "JWT_ACCESS_TOKEN_LIFETIME_MINUTES=60" >> .env
           echo "JWT_REFRESH_TOKEN_LIFETIME_DAYS=7" >> .env
-      - name: Create complete mocks for all apps
+      - name: Create complete mocks
         run: |
-          # Create scraper models with exact field names expected by admin
-          mkdir -p apps/scraper
+          # Create all mock models
+          mkdir -p apps/scraper apps/agents apps/testrunner apps/core
           
+          # Scraper models with Status enum
           cat > apps/scraper/models.py << 'PYEOF'
           from django.db import models
           import uuid
@@ -107,21 +108,21 @@ jobs:
               requires_js = models.BooleanField(default=False)
               is_active = models.BooleanField(default=True)
               created_at = models.DateTimeField(auto_now_add=True)
-              
-              def __str__(self):
-                  return self.name
           
           class ScraperRun(models.Model):
+              class Status(models.TextChoices):
+                  PENDING = 'pending'
+                  RUNNING = 'running'
+                  COMPLETED = 'completed'
+                  FAILED = 'failed'
+              
               id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
               target = models.ForeignKey(ScraperTarget, on_delete=models.CASCADE, null=True, blank=True)
-              status = models.CharField(max_length=50, default='pending')
+              status = models.CharField(max_length=20, default=Status.PENDING, choices=Status.choices)
               started_at = models.DateTimeField(auto_now_add=True)
               completed_at = models.DateTimeField(null=True, blank=True)
               records_scraped = models.IntegerField(default=0)
               error_message = models.TextField(blank=True)
-              
-              def __str__(self):
-                  return f"Run {self.id} - {self.status}"
           
           class ScrapedData(models.Model):
               class DataStatus(models.TextChoices):
@@ -136,7 +137,7 @@ jobs:
               source_url = models.URLField()
               row_count = models.IntegerField(default=0)
               column_count = models.IntegerField(default=0)
-              status = models.CharField(max_length=20, default=DataStatus.PENDING)
+              status = models.CharField(max_length=20, default=DataStatus.PENDING, choices=DataStatus.choices)
               data = models.JSONField(default=dict)
               created_at = models.DateTimeField(auto_now_add=True)
               
@@ -144,18 +145,12 @@ jobs:
                   return {"fixtures": "mock_data"}
           PYEOF
           
-          cat > apps/scraper/__init__.py << 'PYEOF'
-          # Mock scraper module
-          PYEOF
-          
+          # Scraper views
           cat > apps/scraper/views.py << 'PYEOF'
           from django.http import JsonResponse
           from django.views.decorators.csrf import csrf_exempt
           from django.views.decorators.http import require_http_methods
           import json
-          import logging
-          
-          logger = logging.getLogger(__name__)
           
           @csrf_exempt
           @require_http_methods(["POST"])
@@ -176,7 +171,6 @@ jobs:
                       'url': url,
                       'data_type': data_type
                   }, status=200)
-                  
               except Exception as e:
                   return JsonResponse({'error': str(e)}, status=500)
           
@@ -211,21 +205,16 @@ jobs:
           from django.contrib import admin
           from .models import ScraperTarget, ScraperRun, ScrapedData
           
-          @admin.register(ScraperTarget)
-          class ScraperTargetAdmin(admin.ModelAdmin):
-              list_display = ('name', 'url', 'data_type', 'requires_js', 'is_active')
-          
-          @admin.register(ScraperRun)
-          class ScraperRunAdmin(admin.ModelAdmin):
-              list_display = ('id', 'target', 'status', 'records_scraped', 'started_at')
-          
-          @admin.register(ScrapedData)
-          class ScrapedDataAdmin(admin.ModelAdmin):
-              list_display = ('title', 'source_url', 'row_count', 'status')
+          admin.site.register(ScraperTarget)
+          admin.site.register(ScraperRun)
+          admin.site.register(ScrapedData)
           PYEOF
           
-          # Mock agents
-          mkdir -p apps/agents
+          cat > apps/scraper/__init__.py << 'PYEOF'
+          # Scraper app
+          PYEOF
+          
+          # Agents
           cat > apps/agents/__init__.py << 'PYEOF'
           class TestCaseGeneratorAgent:
               def generate(self, feature_description, scraped_data=None, test_type="unit", num_tests=5):
@@ -243,8 +232,7 @@ jobs:
           from django.contrib import admin
           PYEOF
           
-          # Mock testrunner
-          mkdir -p apps/testrunner
+          # Testrunner
           cat > apps/testrunner/__init__.py << 'PYEOF'
           # Test runner app
           PYEOF
@@ -261,8 +249,7 @@ jobs:
           from django.contrib import admin
           PYEOF
           
-          # Mock core models
-          mkdir -p apps/core
+          # Core models
           cat > apps/core/models.py << 'PYEOF'
           from django.db import models
           from django.contrib.auth.models import AbstractUser
@@ -300,7 +287,7 @@ jobs:
               
               id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
               suite = models.ForeignKey(TestSuite, on_delete=models.CASCADE)
-              status = models.CharField(max_length=20, default=Status.PENDING)
+              status = models.CharField(max_length=20, default=Status.PENDING, choices=Status.choices)
               result = models.CharField(max_length=50, blank=True)
               total_tests = models.IntegerField(default=0)
               passed = models.IntegerField(default=0)
@@ -337,9 +324,6 @@ jobs:
           PYEOF
           
           cat > apps/core/middleware.py << 'PYEOF'
-          import structlog
-          logger = structlog.get_logger(__name__)
-          
           class StructuredLoggingMiddleware:
               def __init__(self, get_response):
                   self.get_response = get_response
@@ -348,12 +332,16 @@ jobs:
                   response = self.get_response(request)
                   return response
           PYEOF
-      - name: Setup database and run tests
+          
+          cat > apps/core/__init__.py << 'PYEOF'
+          # Core app
+          PYEOF
+      - name: Setup and run tests
         run: |
           # Remove existing migrations
           rm -rf apps/*/migrations/
           
-          # Create fresh migrations
+          # Create migrations
           python manage.py makemigrations core --noinput
           python manage.py makemigrations scraper --noinput
           python manage.py makemigrations testrunner --noinput
@@ -362,20 +350,17 @@ jobs:
           # Apply migrations
           python manage.py migrate --noinput
           
-          # Test the scraper endpoint
-          python manage.py shell << 'EOF'
+          # Test scraper endpoint
+          python manage.py shell -c "
           import json
           from django.test import Client
-          
           client = Client()
-          response = client.post('/api/scraper/trigger', 
-                                json.dumps({'url': 'https://example.com'}),
-                                content_type='application/json')
-          print(f"Response status: {response.status_code}")
-          print(f"Response content: {response.content}")
-          assert response.status_code == 200, f"Scraper endpoint failed"
-          print("✓ Scraper endpoint works!")
-          EOF
+          response = client.post('/api/scraper/trigger', json.dumps({'url': 'https://example.com'}), content_type='application/json')
+          print(f'Status: {response.status_code}')
+          print(f'Content: {response.content}')
+          assert response.status_code == 200, 'Scraper endpoint failed'
+          print('✓ Scraper works!')
+          "
           
           # Run API tests
           pytest tests/api/test_django_endpoints.py -v --tb=short

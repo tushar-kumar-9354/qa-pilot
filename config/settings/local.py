@@ -69,3 +69,9 @@ LOGGING = {
     },
     'root': {'handlers': ['console'], 'level': 'INFO'},
 }
+
+# Disable debug toolbar SQL panel (conflicts with psycopg3)
+DEBUG_TOOLBAR_CONFIG = {
+    'DISABLE_PANELS': ['debug_toolbar.panels.sql.SQLPanel'],
+    'SHOW_TOOLBAR_CALLBACK': lambda request: False,  # Fully disable toolbar
+}

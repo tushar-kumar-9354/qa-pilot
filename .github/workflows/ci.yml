@@ -11,315 +11,11 @@ env:
   PYTHONPATH: .
 
 jobs:
-  # ── JOB 1: API Tests (runs FIRST) ───────────────────────────
-  api-tests:
-    name: "API Tests (Django + FastAPI)"
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install \
-            pytest==8.2.0 pytest-django==4.8.0 pytest-mock==3.14.0 \
-            pytest-asyncio==0.23.8 \
-            python-decouple==3.8 django==5.0.4 \
-            djangorestframework==3.15.1 \
-            djangorestframework-simplejwt==5.3.1 \
-            django-cors-headers==4.3.1 django-filter==24.2 \
-            structlog==24.1.0 dj-database-url==2.1.0 \
-            whitenoise==6.6.0 celery==5.4.0 redis==5.0.4 Pillow \
-            httpx==0.27.2 fastapi==0.115.11 uvicorn==0.34.0 \
-            python-jose[cryptography]==3.3.0 \
-            beautifulsoup4==4.12.3 fake-useragent==1.5.1 \
-            requests==2.31.0 pandas==2.2.2
-      - name: Create .env
-        run: |
-          echo "DJANGO_SECRET_KEY=ci-secret-key" > .env
-          echo "GEMINI_API_KEY=dummy" >> .env
-          echo "GEMINI_MODEL=gemini-2.0-flash" >> .env
-          echo "SCRAPER_HEADLESS=True" >> .env
-          echo "SCRAPER_TIMEOUT=30" >> .env
-          echo "SCRAPER_MAX_RETRIES=3" >> .env
-          echo "SCRAPER_DELAY_MIN=1" >> .env
-          echo "SCRAPER_DELAY_MAX=3" >> .env
-          echo "JWT_ACCESS_TOKEN_LIFETIME_MINUTES=60" >> .env
-          echo "JWT_REFRESH_TOKEN_LIFETIME_DAYS=7" >> .env
-      - name: Create complete mocks with no selenium dependency
-        run: |
-          # Remove all existing admin files
-          find apps -name "admin.py" -exec rm -f {} \;
-          
-          # Create all apps
-          mkdir -p apps/scraper apps/agents apps/testrunner apps/core
-          
-          # Simple scraper models without complex relationships
-          cat > apps/scraper/models.py << 'PYEOF'
-          import uuid
-          from django.db import models
-          
-          class ScraperTarget(models.Model):
-              id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-              name = models.CharField(max_length=255)
-              url = models.URLField()
-              is_active = models.BooleanField(default=True)
-              created_at = models.DateTimeField(auto_now_add=True)
-          
-          class ScraperRun(models.Model):
-              id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-              target = models.ForeignKey(ScraperTarget, on_delete=models.CASCADE, null=True, blank=True)
-              status = models.CharField(max_length=20, default='pending')
-              started_at = models.DateTimeField(auto_now_add=True)
-              triggered_by = models.CharField(max_length=100, default='scheduler')
-          
-          class ScrapedData(models.Model):
-              id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-              title = models.CharField(max_length=500, blank=True)
-              source_url = models.URLField()
-              row_count = models.IntegerField(default=0)
-              created_at = models.DateTimeField(auto_now_add=True)
-              
-              def as_pytest_fixtures(self):
-                  return []
-          PYEOF
-          
-          # Scraper views - pure mock, no database
-          cat > apps/scraper/views.py << 'PYEOF'
-          from django.http import JsonResponse
-          from django.views.decorators.csrf import csrf_exempt
-          import json
-          
-          @csrf_exempt
-          def trigger_scraper(request):
-              if request.method == 'POST':
-                  try:
-                      data = json.loads(request.body) if request.body else {}
-                      return JsonResponse({
-                          'status': 'success',
-                          'task_id': 'mock-task-12345',
-                          'url': data.get('url', 'https://example.com')
-                      }, status=200)
-                  except:
-                      return JsonResponse({'error': 'Invalid request'}, status=400)
-              return JsonResponse({'error': 'Method not allowed'}, status=405)
-          
-          def list_scraped_data(request):
-              return JsonResponse({
-                  'total': 0,
-                  'results': [],
-                  'page': 1,
-                  'page_size': 20
-              }, status=200)
-          PYEOF
-          
-          cat > apps/scraper/urls.py << 'PYEOF'
-          from django.urls import path
-          from . import views
-          
-          urlpatterns = [
-              path('trigger', views.trigger_scraper, name='trigger_scraper'),
-              path('data', views.list_scraped_data, name='list_scraped_data'),
-          ]
-          PYEOF
-          
-          # Mock scraper tasks - no selenium imports
-          cat > apps/scraper/tasks.py << 'PYEOF'
-          from celery import shared_task
-          
-          @shared_task
-          def scrape_custom_url_task(url, data_type, css_selector):
-              return {'status': 'success', 'url': url, 'scraped_items': 10}
-          
-          @shared_task
-          def scrape_wikipedia_task(url, table_index=0):
-              return {'status': 'success', 'url': url}
-          
-          @shared_task
-          def scrape_hacker_news_task():
-              return {'status': 'success', 'stories': 10}
-          PYEOF
-          
-          cat > apps/scraper/__init__.py << 'PYEOF'
-          PYEOF
-          
-          # Mock scraper engine - prevent selenium import
-          cat > apps/scraper/engine.py << 'PYEOF'
-          import hashlib
-          import json
-          
-          class ScraperEngine:
-              def __init__(self):
-                  pass
-              
-              def __enter__(self):
-                  return self
-              
-              def __exit__(self, *args):
-                  pass
-              
-              def scrape_table(self, url, table_index=0, css_selector=None):
-                  return {'url': url, 'row_count': 0, 'headers': [], 'rows': []}
-              
-              def scrape_article(self, url):
-                  return {'url': url, 'title': 'Mock Article', 'paragraphs': []}
-              
-              def scrape_hacker_news(self):
-                  return {'url': 'https://news.ycombinator.com/', 'stories': [], 'row_count': 0}
-              
-              @staticmethod
-              def compute_hash(data):
-                  return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
-              
-              @staticmethod
-              def normalize_table_data(raw_data):
-                  return []
-          PYEOF
-          
-          # Agents
-          cat > apps/agents/__init__.py << 'PYEOF'
-          class TestCaseGeneratorAgent:
-              def generate(self, *args, **kwargs):
-                  return {"tests": [], "status": "success"}
-          
-          class QAChatAgent:
-              def chat(self, message, context=None):
-                  return f"Mock response: {message}"
-          
-          class FailureAnalyzerAgent:
-              def analyze(self, logs, test_name):
-                  return {"root_cause": "Mock", "fix_suggestion": "Mock"}
-          
-          class SelfHealingSelectorAgent:
-              def heal(self, **kwargs):
-                  return {"new_selector": "mock-selector"}
-          
-          test_generator = TestCaseGeneratorAgent()
-          chat_agent = QAChatAgent()
-          PYEOF
-          
-          # Testrunner
-          mkdir -p apps/testrunner
-          cat > apps/testrunner/__init__.py << 'PYEOF'
-          PYEOF
-          
-          cat > apps/testrunner/tasks.py << 'PYEOF'
-          from celery import shared_task
-          
-          @shared_task
-          def execute_test_suite_task(run_id):
-              return {'status': 'completed', 'run_id': run_id}
-          PYEOF
-          
-          # Core models
-          cat > apps/core/models.py << 'PYEOF'
-          from django.db import models
-          from django.contrib.auth.models import AbstractUser
-          import uuid
-          
-          class User(AbstractUser):
-              id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-          
-          class TestSuite(models.Model):
-              id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-              name = models.CharField(max_length=200)
-              description = models.TextField(blank=True)
-              status = models.CharField(max_length=50, default='active')
-              total_cases = models.IntegerField(default=0)
-              pass_rate = models.FloatField(default=0.0)
-              tags = models.JSONField(default=list)
-              created_at = models.DateTimeField(auto_now_add=True)
-          
-          class TestCase(models.Model):
-              id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-              name = models.CharField(max_length=200)
-              test_type = models.CharField(max_length=50, default='unit')
-              priority = models.CharField(max_length=20, default='medium')
-              is_ai_generated = models.BooleanField(default=False)
-              suite = models.ForeignKey(TestSuite, on_delete=models.CASCADE, related_name='test_cases')
-          
-          class TestRun(models.Model):
-              class Status(models.TextChoices):
-                  PENDING = 'pending'
-                  RUNNING = 'running'
-                  COMPLETED = 'completed'
-                  FAILED = 'failed'
-          
-              id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-              suite = models.ForeignKey(TestSuite, on_delete=models.CASCADE)
-              status = models.CharField(max_length=20, default=Status.PENDING, choices=Status.choices)
-              result = models.CharField(max_length=50, blank=True)
-              total_tests = models.IntegerField(default=0)
-              passed = models.IntegerField(default=0)
-              failed = models.IntegerField(default=0)
-              pass_rate = models.FloatField(default=0.0)
-              environment = models.CharField(max_length=50, default='development')
-              celery_task_id = models.CharField(max_length=255, blank=True)
-              logs = models.TextField(blank=True)
-              created_at = models.DateTimeField(auto_now_add=True)
-          
-          class BugReport(models.Model):
-              id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-              test_run = models.ForeignKey(TestRun, on_delete=models.CASCADE, related_name='bug_reports')
-              status = models.CharField(max_length=20, default='open')
-          PYEOF
-          
-          # Middleware
-          cat > apps/core/middleware.py << 'PYEOF'
-          class StructuredLoggingMiddleware:
-              def __init__(self, get_response):
-                  self.get_response = get_response
-              def __call__(self, request):
-                  return self.get_response(request)
-          PYEOF
-          
-          cat > apps/core/__init__.py << 'PYEOF'
-          PYEOF
-          
-          # Empty admin files
-          echo "# Empty admin file" > apps/core/admin.py
-          echo "# Empty admin file" > apps/scraper/admin.py
-          echo "# Empty admin file" > apps/agents/admin.py
-          echo "# Empty admin file" > apps/testrunner/admin.py
-      - name: Setup and run API tests
-        run: |
-          # Remove existing migrations
-          rm -rf apps/*/migrations/
-          
-          # Create migrations
-          python manage.py makemigrations core --noinput
-          python manage.py makemigrations scraper --noinput
-          python manage.py makemigrations testrunner --noinput
-          python manage.py makemigrations agents --noinput
-          
-          # Apply migrations
-          python manage.py migrate --noinput
-          
-          # Create test user
-          python manage.py shell -c "from django.contrib.auth import get_user_model; User = get_user_model(); User.objects.create_superuser('admin', 'admin@example.com', 'admin123') if not User.objects.exists() else None"
-          
-          # Test scraper endpoint
-          python manage.py shell -c "
-          import json
-          from django.test import Client
-          client = Client()
-          response = client.post('/api/scraper/trigger', json.dumps({'url': 'https://example.com'}), content_type='application/json')
-          print(f'Status: {response.status_code}')
-          print(f'Content: {response.content}')
-          assert response.status_code == 200, f'Scraper endpoint failed: {response.content}'
-          print('✓ Scraper works!')
-          "
-          
-          # Run API tests
-          pytest tests/api/test_django_endpoints.py -v --tb=short
-  # ── JOB 2: Unit Tests ────────────────────────────────────────
+
+  # ── JOB 1: Unit Tests ────────────────────────────────────────
   unit-tests:
-    name: "Unit Tests"
+    name: "Unit Tests (29 tests)"
     runs-on: ubuntu-latest
-    needs: api-tests
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -329,16 +25,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install \
-            pytest==8.2.0 pytest-mock==3.14.0 \
-            python-decouple==3.8 django==5.0.4 \
-            djangorestframework==3.15.1 \
-            djangorestframework-simplejwt==5.3.1 \
-            django-cors-headers==4.3.1 django-filter==24.2 \
-            structlog==24.1.0 dj-database-url==2.1.0 \
-            whitenoise==6.6.0 celery==5.4.0 redis==5.0.4 \
-            beautifulsoup4==4.12.3 fake-useragent==1.5.1 \
-            requests==2.31.0 pandas==2.2.2
+          pip install pytest==8.2.0 pytest-mock==3.14.0 python-decouple==3.8 django==5.0.4 djangorestframework==3.15.1 djangorestframework-simplejwt==5.3.1 django-cors-headers==4.3.1 django-filter==24.2 structlog==24.1.0 dj-database-url==2.1.0 whitenoise==6.6.0 celery==5.4.0 redis==5.0.4 beautifulsoup4==4.12.3 fake-useragent==1.5.1 requests==2.31.0 pandas==2.2.2
       - name: Create .env
         run: |
           echo "DJANGO_SECRET_KEY=ci-secret-key" > .env
@@ -354,11 +41,125 @@ jobs:
       - name: Run unit tests
         run: pytest tests/unit/ -v --tb=short
 
-  # ── JOB 3: E2E Tests ─────────────────────────────────────────
+  # ── JOB 2: API Tests ─────────────────────────────────────────
+  api-tests:
+    name: "API Tests (Django TestClient)"
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pytest==8.2.0 pytest-django==4.8.0 pytest-mock==3.14.0 python-decouple==3.8 django==5.0.4 djangorestframework==3.15.1 djangorestframework-simplejwt==5.3.1 django-cors-headers==4.3.1 django-filter==24.2 structlog==24.1.0 dj-database-url==2.1.0 whitenoise==6.6.0 celery==5.4.0 redis==5.0.4 Pillow==10.3.0 beautifulsoup4==4.12.3 fake-useragent==1.5.1 requests==2.31.0 pandas==2.2.2
+      - name: Create .env
+        run: |
+          echo "DJANGO_SECRET_KEY=ci-secret-key" > .env
+          echo "GEMINI_API_KEY=dummy" >> .env
+          echo "GEMINI_MODEL=gemini-2.0-flash" >> .env
+          echo "SCRAPER_HEADLESS=True" >> .env
+          echo "SCRAPER_TIMEOUT=30" >> .env
+          echo "SCRAPER_MAX_RETRIES=3" >> .env
+          echo "SCRAPER_DELAY_MIN=1" >> .env
+          echo "SCRAPER_DELAY_MAX=3" >> .env
+          echo "JWT_ACCESS_TOKEN_LIFETIME_MINUTES=60" >> .env
+          echo "JWT_REFRESH_TOKEN_LIFETIME_DAYS=7" >> .env
+      - name: Run migrations
+        run: python manage.py migrate --noinput
+      - name: Run API tests
+        run: pytest tests/api/ -v --tb=short
+
+  # ── JOB 3: Integration Tests ──────────────────────────────────
+  integration-tests:
+    name: "Integration Tests (PostgreSQL)"
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: qa_pilot_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pytest==8.2.0 pytest-django==4.8.0 pytest-mock==3.14.0 python-decouple==3.8 django==5.0.4 djangorestframework==3.15.1 djangorestframework-simplejwt==5.3.1 django-cors-headers==4.3.1 django-filter==24.2 structlog==24.1.0 dj-database-url==2.1.0 whitenoise==6.6.0 celery==5.4.0 redis==5.0.4 psycopg2-binary==2.9.9 Pillow==10.3.0 beautifulsoup4==4.12.3 fake-useragent==1.5.1 requests==2.31.0 pandas==2.2.2 factory-boy==3.3.0
+      - name: Create .env
+        run: |
+          echo "DJANGO_SECRET_KEY=ci-secret-key" > .env
+          echo "GEMINI_API_KEY=dummy" >> .env
+          echo "GEMINI_MODEL=gemini-2.0-flash" >> .env
+          echo "POSTGRES_DB=qa_pilot_test" >> .env
+          echo "POSTGRES_USER=postgres" >> .env
+          echo "POSTGRES_PASSWORD=postgres" >> .env
+          echo "POSTGRES_HOST=localhost" >> .env
+          echo "POSTGRES_PORT=5432" >> .env
+          echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5432/qa_pilot_test" >> .env
+          echo "SCRAPER_HEADLESS=True" >> .env
+          echo "SCRAPER_TIMEOUT=30" >> .env
+          echo "SCRAPER_MAX_RETRIES=3" >> .env
+          echo "SCRAPER_DELAY_MIN=1" >> .env
+          echo "SCRAPER_DELAY_MAX=3" >> .env
+          echo "JWT_ACCESS_TOKEN_LIFETIME_MINUTES=60" >> .env
+          echo "JWT_REFRESH_TOKEN_LIFETIME_DAYS=7" >> .env
+      - name: Write CI settings
+        run: |
+          cat > config/settings/ci.py << 'EOF'
+          from pathlib import Path
+          from decouple import config
+          BASE_DIR = Path(__file__).resolve().parent.parent.parent
+          SECRET_KEY = config('DJANGO_SECRET_KEY', default='ci-key')
+          DEBUG = True
+          ALLOWED_HOSTS = ['*']
+          INSTALLED_APPS = ['django.contrib.admin','django.contrib.auth','django.contrib.contenttypes','django.contrib.sessions','django.contrib.messages','django.contrib.staticfiles','rest_framework','rest_framework_simplejwt','corsheaders','django_filters','apps.core','apps.scraper','apps.testrunner','apps.agents']
+          MIDDLEWARE = ['django.middleware.security.SecurityMiddleware','django.contrib.sessions.middleware.SessionMiddleware','django.middleware.common.CommonMiddleware','django.contrib.auth.middleware.AuthenticationMiddleware','django.contrib.messages.middleware.MessageMiddleware','apps.core.middleware.StructuredLoggingMiddleware']
+          ROOT_URLCONF = 'config.urls'
+          AUTH_USER_MODEL = 'core.User'
+          TEMPLATES = [{'BACKEND':'django.template.backends.django.DjangoTemplates','DIRS':[BASE_DIR/'frontend'/'templates'],'APP_DIRS':True,'OPTIONS':{'context_processors':['django.template.context_processors.request','django.contrib.auth.context_processors.auth','django.contrib.messages.context_processors.messages']}}]
+          DATABASES = {'default':{'ENGINE':'django.db.backends.postgresql','NAME':'qa_pilot_test','USER':'postgres','PASSWORD':'postgres','HOST':'localhost','PORT':'5432'}}
+          CELERY_TASK_ALWAYS_EAGER = True
+          CACHES = {'default':{'BACKEND':'django.core.cache.backends.dummy.DummyCache'}}
+          GEMINI_API_KEY = config('GEMINI_API_KEY', default='')
+          GEMINI_MODEL = config('GEMINI_MODEL', default='gemini-2.0-flash')
+          SCRAPER_CONFIG = {'HEADLESS':True,'TIMEOUT':30,'MAX_RETRIES':3,'DELAY_MIN':1.0,'DELAY_MAX':3.0}
+          STATIC_URL = '/static/'
+          DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+          USE_TZ = True
+          REST_FRAMEWORK = {'DEFAULT_AUTHENTICATION_CLASSES':['rest_framework_simplejwt.authentication.JWTAuthentication'],'DEFAULT_PERMISSION_CLASSES':['rest_framework.permissions.AllowAny']}
+          from datetime import timedelta
+          SIMPLE_JWT = {'ACCESS_TOKEN_LIFETIME':timedelta(minutes=60)}
+          import structlog
+          structlog.configure(processors=[structlog.stdlib.add_log_level,structlog.stdlib.ProcessorFormatter.wrap_for_formatter],wrapper_class=structlog.stdlib.BoundLogger,context_class=dict,logger_factory=structlog.stdlib.LoggerFactory())
+          LOGGING = {'version':1,'disable_existing_loggers':False,'handlers':{'console':{'class':'logging.StreamHandler'}},'root':{'handlers':['console'],'level':'WARNING'}}
+          EOF
+      - name: Run migrations
+        run: python manage.py migrate --noinput
+      - name: Run integration tests
+        run: pytest tests/integration/ -v --tb=short
+
+  # ── JOB 4: E2E Tests ─────────────────────────────────────────
   e2e-tests:
     name: "E2E Tests (Selenium Chrome)"
     runs-on: ubuntu-latest
-    needs: [api-tests, unit-tests]
+    needs: [unit-tests, api-tests]
     services:
       postgres:
         image: postgres:16-alpine
@@ -383,23 +184,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y chromium-browser chromium-chromedriver
-          echo "CHROME_BIN=/usr/bin/chromium-browser" >> $GITHUB_ENV
-          echo "CHROMEDRIVER=/usr/bin/chromedriver" >> $GITHUB_ENV
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install \
-            pytest==8.2.0 pytest-django==4.8.0 pytest-mock==3.14.0 \
-            python-decouple==3.8 django==5.0.4 \
-            djangorestframework==3.15.1 \
-            djangorestframework-simplejwt==5.3.1 \
-            django-cors-headers==4.3.1 django-filter==24.2 \
-            structlog==24.1.0 dj-database-url==2.1.0 \
-            whitenoise==6.6.0 celery==5.4.0 redis==5.0.4 \
-            psycopg2-binary==2.9.9 Pillow \
-            selenium==4.27.1 webdriver-manager==4.0.2 \
-            beautifulsoup4==4.12.3 fake-useragent==1.5.1 \
-            requests==2.31.0 pandas==2.2.2 factory-boy==3.3.0
+          pip install pytest==8.2.0 pytest-django==4.8.0 pytest-mock==3.14.0 python-decouple==3.8 django==5.0.4 djangorestframework==3.15.1 djangorestframework-simplejwt==5.3.1 django-cors-headers==4.3.1 django-filter==24.2 structlog==24.1.0 dj-database-url==2.1.0 whitenoise==6.6.0 celery==5.4.0 redis==5.0.4 psycopg2-binary==2.9.9 Pillow==10.3.0 selenium==4.21.0 beautifulsoup4==4.12.3 fake-useragent==1.5.1 requests==2.31.0 pandas==2.2.2
       - name: Create .env
         run: |
           echo "DJANGO_SECRET_KEY=ci-secret-key" > .env
@@ -423,123 +211,16 @@ jobs:
       - name: Run E2E tests
         run: pytest tests/e2e/ -v --tb=short
 
-  # ── JOB 4: Integration Tests ─────────────────────────────────
-  integration-tests:
-    name: "Integration Tests (PostgreSQL)"
-    runs-on: ubuntu-latest
-    needs: [api-tests, unit-tests, e2e-tests]
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_DB: qa_pilot_test
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install \
-            pytest==8.2.0 pytest-django==4.8.0 pytest-mock==3.14.0 \
-            python-decouple==3.8 django==5.0.4 \
-            djangorestframework==3.15.1 \
-            djangorestframework-simplejwt==5.3.1 \
-            django-cors-headers==4.3.1 django-filter==24.2 \
-            structlog==24.1.0 dj-database-url==2.1.0 \
-            whitenoise==6.6.0 celery==5.4.0 redis==5.0.4 \
-            psycopg2-binary==2.9.9 Pillow \
-            beautifulsoup4==4.12.3 fake-useragent==1.5.1 \
-            requests==2.31.0 pandas==2.2.2 factory-boy==3.3.0
-      - name: Create .env
-        run: |
-          echo "DJANGO_SECRET_KEY=ci-secret-key" > .env
-          echo "GEMINI_API_KEY=dummy" >> .env
-          echo "GEMINI_MODEL=gemini-2.0-flash" >> .env
-          echo "POSTGRES_DB=qa_pilot_test" >> .env
-          echo "POSTGRES_USER=postgres" >> .env
-          echo "POSTGRES_PASSWORD=postgres" >> .env
-          echo "POSTGRES_HOST=localhost" >> .env
-          echo "POSTGRES_PORT=5432" >> .env
-          echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5432/qa_pilot_test" >> .env
-          echo "SCRAPER_HEADLESS=True" >> .env
-          echo "SCRAPER_TIMEOUT=30" >> .env
-          echo "SCRAPER_MAX_RETRIES=3" >> .env
-          echo "SCRAPER_DELAY_MIN=1" >> .env
-          echo "SCRAPER_DELAY_MAX=3" >> .env
-          echo "JWT_ACCESS_TOKEN_LIFETIME_MINUTES=60" >> .env
-          echo "JWT_REFRESH_TOKEN_LIFETIME_DAYS=7" >> .env
-      - name: Override CI settings for PostgreSQL
-        run: |
-          cat > config/settings/ci.py << 'PYEOF'
-          from pathlib import Path
-          from decouple import config
-          BASE_DIR = Path(__file__).resolve().parent.parent.parent
-          SECRET_KEY = config('DJANGO_SECRET_KEY', default='ci-key')
-          DEBUG = True
-          ALLOWED_HOSTS = ['*']
-          INSTALLED_APPS = [
-              'django.contrib.admin','django.contrib.auth',
-              'django.contrib.contenttypes','django.contrib.sessions',
-              'django.contrib.messages','django.contrib.staticfiles',
-              'rest_framework','rest_framework_simplejwt',
-              'corsheaders','django_filters',
-              'apps.core','apps.scraper','apps.testrunner','apps.agents',
-          ]
-          MIDDLEWARE = [
-              'django.middleware.security.SecurityMiddleware',
-              'django.contrib.sessions.middleware.SessionMiddleware',
-              'django.middleware.common.CommonMiddleware',
-              'django.contrib.auth.middleware.AuthenticationMiddleware',
-              'django.contrib.messages.middleware.MessageMiddleware',
-          ]
-          ROOT_URLCONF = 'config.urls'
-          AUTH_USER_MODEL = 'core.User'
-          TEMPLATES = [{'BACKEND':'django.template.backends.django.DjangoTemplates','DIRS':[BASE_DIR/'frontend'/'templates'],'APP_DIRS':True,'OPTIONS':{'context_processors':['django.template.context_processors.request','django.contrib.auth.context_processors.auth','django.contrib.messages.context_processors.messages']}}]
-          DATABASES = {'default': {'ENGINE':'django.db.backends.postgresql','NAME':'qa_pilot_test','USER':'postgres','PASSWORD':'postgres','HOST':'localhost','PORT':'5432'}}
-          CELERY_TASK_ALWAYS_EAGER = True
-          CACHES = {'default': {'BACKEND': 'django.core.cache.backends.dummy.DummyCache'}}
-          GEMINI_API_KEY = config('GEMINI_API_KEY', default='')
-          GEMINI_MODEL = config('GEMINI_MODEL', default='gemini-2.0-flash')
-          SCRAPER_CONFIG = {'HEADLESS':True,'TIMEOUT':30,'MAX_RETRIES':3,'DELAY_MIN':1.0,'DELAY_MAX':3.0}
-          STATIC_URL = '/static/'
-          DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-          USE_TZ = True
-          REST_FRAMEWORK = {'DEFAULT_AUTHENTICATION_CLASSES':['rest_framework_simplejwt.authentication.JWTAuthentication'],'DEFAULT_PERMISSION_CLASSES':['rest_framework.permissions.AllowAny']}
-          from datetime import timedelta
-          SIMPLE_JWT = {'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60)}
-          LOGGING = {'version':1,'disable_existing_loggers':False,'handlers':{'console':{'class':'logging.StreamHandler'}},'root':{'handlers':['console'],'level':'WARNING'}}
-          PYEOF
-      - name: Run migrations
-        run: python manage.py migrate --noinput
-      - name: Run integration tests
-        run: pytest tests/integration/ -v --tb=short
-
-  # ── Final Summary ────────────────────────────────────────────
+  # ── Summary ───────────────────────────────────────────────────
   all-tests-passed:
     name: "All Tests Passed"
     runs-on: ubuntu-latest
-    needs: [api-tests, unit-tests, e2e-tests, integration-tests]
+    needs: [unit-tests, api-tests, integration-tests, e2e-tests]
     if: always()
     steps:
-      - name: Check all jobs
+      - name: Summary
         run: |
-          echo "================================"
-          echo "  QA-Pilot Full Test Summary"
-          echo "================================"
-          echo "API Tests:         ${{ needs.api-tests.result }}"
           echo "Unit Tests:        ${{ needs.unit-tests.result }}"
-          echo "E2E Tests:         ${{ needs.e2e-tests.result }}"
+          echo "API Tests:         ${{ needs.api-tests.result }}"
           echo "Integration Tests: ${{ needs.integration-tests.result }}"
-          echo "================================"
+          echo "E2E Tests:         ${{ needs.e2e-tests.result }}"

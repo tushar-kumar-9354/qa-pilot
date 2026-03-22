@@ -30,8 +30,9 @@ CACHES = {
 }
 
 INSTALLED_APPS = [app for app in INSTALLED_APPS
-                  if app not in ['django_celery_beat', 'django_celery_results']]
+                  if app not in ['django_celery_beat', 'django_celery_results', 'debug_toolbar']]
 
+MIDDLEWARE = [m for m in MIDDLEWARE if 'debug_toolbar' not in m]
 CORS_ALLOW_ALL_ORIGINS = True
 
 # ── Templates ────────────────────────────────────────────────

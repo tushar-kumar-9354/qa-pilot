@@ -55,82 +55,82 @@ jobs:
         run: pytest tests/unit/ -v --tb=short
 
   # ── JOB 2: Integration Tests (PostgreSQL service) ─────────────
-    e2e-tests:
-      name: "E2E Tests (Selenium Chrome)"
-      runs-on: ubuntu-latest
-      needs: [integration-tests, api-tests]
+  e2e-tests:
+    name: "E2E Tests (Selenium Chrome)"
+    runs-on: ubuntu-latest
+    needs: [integration-tests, api-tests]
 
-      services:
-        postgres:
-          image: postgres:16-alpine
-          env:
-            POSTGRES_DB: qa_pilot_test
-            POSTGRES_USER: postgres
-            POSTGRES_PASSWORD: postgres
-          ports:
-            - 5432:5432
-          options: >-
-            --health-cmd pg_isready
-            --health-interval 10s
-            --health-timeout 5s
-            --health-retries 5
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: qa_pilot_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
-      steps:
-        - uses: actions/checkout@v4
+    steps:
+      - uses: actions/checkout@v4
 
-        - uses: actions/setup-python@v5
-          with:
-            python-version: "3.11"
-            cache: pip
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
 
-        - name: Install Chrome
-          run: |
-            sudo apt-get update
-            sudo apt-get install -y chromium-browser chromium-chromedriver
-            echo "CHROME_BIN=/usr/bin/chromium-browser" >> $GITHUB_ENV
-            echo "CHROMEDRIVER=/usr/bin/chromedriver" >> $GITHUB_ENV
+      - name: Install Chrome
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y chromium-browser chromium-chromedriver
+          echo "CHROME_BIN=/usr/bin/chromium-browser" >> $GITHUB_ENV
+          echo "CHROMEDRIVER=/usr/bin/chromedriver" >> $GITHUB_ENV
 
-        - name: Install dependencies
-          run: |
-            pip install --upgrade pip
-            pip install \
-              pytest==8.2.0 pytest-django==4.8.0 pytest-mock==3.14.0 \
-              python-decouple==3.8 django==5.0.4 \
-              djangorestframework==3.15.1 \
-              djangorestframework-simplejwt==5.3.1 \
-              django-cors-headers==4.3.1 django-filter==24.2 \
-              structlog==24.1.0 dj-database-url==2.1.0 \
-              whitenoise==6.6.0 celery==5.4.0 redis==5.0.4 \
-              psycopg2-binary==2.9.9 \
-              Pillow \
-              beautifulsoup4==4.12.3 fake-useragent==1.5.1 \
-              requests==2.31.0 pandas==2.2.2 factory-boy==3.3.0
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install \
+            pytest==8.2.0 pytest-django==4.8.0 pytest-mock==3.14.0 \
+            python-decouple==3.8 django==5.0.4 \
+            djangorestframework==3.15.1 \
+            djangorestframework-simplejwt==5.3.1 \
+            django-cors-headers==4.3.1 django-filter==24.2 \
+            structlog==24.1.0 dj-database-url==2.1.0 \
+            whitenoise==6.6.0 celery==5.4.0 redis==5.0.4 \
+            psycopg2-binary==2.9.9 \
+            Pillow \
+            beautifulsoup4==4.12.3 fake-useragent==1.5.1 \
+            requests==2.31.0 pandas==2.2.2 factory-boy==3.3.0
 
-        - name: Create .env
-          run: |
-            echo "DJANGO_SECRET_KEY=ci-secret-key" > .env
-            echo "GEMINI_API_KEY=dummy" >> .env
-            echo "GEMINI_MODEL=gemini-2.0-flash" >> .env
-            echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5432/qa_pilot_test" >> .env
-            echo "SCRAPER_HEADLESS=True" >> .env
-            echo "SCRAPER_TIMEOUT=30" >> .env
-            echo "SCRAPER_MAX_RETRIES=3" >> .env
-            echo "SCRAPER_DELAY_MIN=1" >> .env
-            echo "SCRAPER_DELAY_MAX=3" >> .env
-            echo "JWT_ACCESS_TOKEN_LIFETIME_MINUTES=60" >> .env
-            echo "JWT_REFRESH_TOKEN_LIFETIME_DAYS=7" >> .env
+      - name: Create .env
+        run: |
+          echo "DJANGO_SECRET_KEY=ci-secret-key" > .env
+          echo "GEMINI_API_KEY=dummy" >> .env
+          echo "GEMINI_MODEL=gemini-2.0-flash" >> .env
+          echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5432/qa_pilot_test" >> .env
+          echo "SCRAPER_HEADLESS=True" >> .env
+          echo "SCRAPER_TIMEOUT=30" >> .env
+          echo "SCRAPER_MAX_RETRIES=3" >> .env
+          echo "SCRAPER_DELAY_MIN=1" >> .env
+          echo "SCRAPER_DELAY_MAX=3" >> .env
+          echo "JWT_ACCESS_TOKEN_LIFETIME_MINUTES=60" >> .env
+          echo "JWT_REFRESH_TOKEN_LIFETIME_DAYS=7" >> .env
 
-        - name: Run migrations
-          run: python manage.py migrate --noinput
+      - name: Run migrations
+        run: python manage.py migrate --noinput
 
-        - name: Start Django server
-          run: |
-            python manage.py runserver 0.0.0.0:8000 &
-            sleep 5
-            curl -f http://localhost:8000/ || echo "Server starting..."
+      - name: Start Django server
+        run: |
+          python manage.py runserver 0.0.0.0:8000 &
+          sleep 5
+          curl -f http://localhost:8000/ || echo "Server starting..."
 
-        - name: Run E2E tests
-          run: pytest tests/e2e/ -v --tb=short
+      - name: Run E2E tests
+        run: pytest tests/e2e/ -v --tb=short
 
     # ── JOB 2: Integration Tests (PostgreSQL service) ─────────────
   integration-tests:

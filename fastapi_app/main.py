@@ -16,7 +16,6 @@ django.setup()
 from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from jose import jwt, JWTError
 import structlog
@@ -66,7 +65,8 @@ class ConnectionManager:
         logger.info("ws.connected", room=room, total=len(self.active.get(room, [])))
 
     def disconnect(self, websocket: WebSocket, room: str):
-        self.active.get(room, []).remove(websocket) if websocket in self.active.get(room, []) else None
+        if websocket in self.active.get(room, []):
+            self.active[room].remove(websocket)
         logger.info("ws.disconnected", room=room)
 
     async def broadcast(self, room: str, message: dict):
@@ -128,7 +128,7 @@ def update_test_run_task_id(run, task_id):
 @sync_to_async
 def get_dashboard_stats_data():
     from apps.core.models import TestSuite, TestCase, TestRun, BugReport
-    from apps.scraper.models import ScrapedData, ScraperRun
+    from apps.scraper.models import ScrapedData
     from django.utils import timezone
 
     today = timezone.now().date()
@@ -189,31 +189,6 @@ class HealthResponse(BaseModel):
     timestamp: str
     version: str
     services: dict
-
-
-class TestSuiteResponse(BaseModel):
-    id: str
-    name: str
-    description: str
-    status: str
-    total_cases: int
-    pass_rate: float
-    created_at: str
-
-
-class TestRunResponse(BaseModel):
-    id: str
-    suite_name: str
-    status: str
-    result: Optional[str]
-    total_tests: int
-    passed: int
-    failed: int
-    errors: int
-    skipped: int
-    pass_rate: float
-    duration_seconds: Optional[float]
-    created_at: str
 
 
 class TriggerRunRequest(BaseModel):
@@ -404,7 +379,6 @@ async def list_runs(
 @app.post("/api/runs/trigger", tags=["Test Runs"])
 async def trigger_test_run(request: TriggerRunRequest):
     """Trigger a test run via Celery async task."""
-    from apps.core.models import TestSuite, TestRun
     from apps.testrunner.tasks import execute_test_suite_task
 
     try:
@@ -413,7 +387,6 @@ async def trigger_test_run(request: TriggerRunRequest):
         raise HTTPException(status_code=404, detail="Suite not found")
 
     run = await create_test_run(suite, request.environment)
-
     task = execute_test_suite_task.delay(str(run.id))
     await update_test_run_task_id(run, task.id)
 
@@ -507,7 +480,6 @@ async def analyze_failure(request: AnalyzeFailureRequest):
         test_name=request.test_name or f"Run #{str(run.id)[:8]}",
     )
 
-    # Save AI analysis to bug reports
     bug = await sync_to_async(lambda: run.bug_reports.first())()
     if bug and 'root_cause' in result:
         bug.ai_analysis = result.get('root_cause', '') + '\n\n' + result.get('detailed_explanation', '')
@@ -596,13 +568,9 @@ async def trigger_scrape(request: ScrapeRequest):
 # ── WebSocket — Live Test Log Streaming ───────────────────────
 @app.websocket("/ws/runs/{run_id}/logs")
 async def websocket_test_logs(websocket: WebSocket, run_id: str):
-    """
-    WebSocket endpoint: streams live test execution logs to the UI.
-    Connect from JS: const ws = new WebSocket('ws://localhost:8001/ws/runs/{id}/logs')
-    """
+    """WebSocket endpoint: streams live test execution logs to the UI."""
     await manager.connect(websocket, room=run_id)
     try:
-        # Send initial status
         try:
             run = await get_test_run_for_websocket(run_id)
             await websocket.send_json({
@@ -614,7 +582,6 @@ async def websocket_test_logs(websocket: WebSocket, run_id: str):
         except Exception:
             await websocket.send_json({"type": "error", "message": "Run not found"})
 
-        # Keep connection alive, relay messages from Celery via Redis pubsub
         while True:
             try:
                 data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)

@@ -90,34 +90,50 @@ jobs:
           echo "SCRAPER_DELAY_MAX=3" >> .env
           echo "JWT_ACCESS_TOKEN_LIFETIME_MINUTES=60" >> .env
           echo "JWT_REFRESH_TOKEN_LIFETIME_DAYS=7" >> .env
-      - name: Create complete mocks
+      - name: Create complete mocks with all expected fields
         run: |
-          # Create all mock models
+          # Create all mock models with all expected fields
           mkdir -p apps/scraper apps/agents apps/testrunner apps/core
           
-          # Simple models without complex relationships
+          # Scraper models with all fields that might be expected
           cat > apps/scraper/models.py << 'PYEOF'
           from django.db import models
+          from django.contrib.auth import get_user_model
           import uuid
+          
+          User = get_user_model()
           
           class ScraperTarget(models.Model):
               id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
               name = models.CharField(max_length=200)
               url = models.URLField()
+              data_type = models.CharField(max_length=50, default='table', blank=True)
+              requires_js = models.BooleanField(default=False)
               is_active = models.BooleanField(default=True)
+              created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
               created_at = models.DateTimeField(auto_now_add=True)
+              updated_at = models.DateTimeField(auto_now=True)
+              
+              def __str__(self):
+                  return self.name
           
           class ScraperRun(models.Model):
               id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
               target = models.ForeignKey(ScraperTarget, on_delete=models.CASCADE, null=True, blank=True)
               status = models.CharField(max_length=50, default='pending')
+              triggered_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
               started_at = models.DateTimeField(auto_now_add=True)
               completed_at = models.DateTimeField(null=True, blank=True)
               records_scraped = models.IntegerField(default=0)
               error_message = models.TextField(blank=True)
+              celery_task_id = models.CharField(max_length=255, blank=True)
+              
+              def __str__(self):
+                  return f"Run {self.id}"
           
           class ScrapedData(models.Model):
               id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+              target = models.ForeignKey(ScraperTarget, on_delete=models.CASCADE, null=True, blank=True)
               title = models.CharField(max_length=500, blank=True)
               source_url = models.URLField()
               row_count = models.IntegerField(default=0)
@@ -130,7 +146,7 @@ jobs:
                   return {"fixtures": "mock_data"}
           PYEOF
           
-          # Scraper views - pure mock without any database operations
+          # Scraper views - pure mock without database operations
           cat > apps/scraper/views.py << 'PYEOF'
           from django.http import JsonResponse
           from django.views.decorators.csrf import csrf_exempt
@@ -192,9 +208,18 @@ jobs:
           from django.contrib import admin
           from .models import ScraperTarget, ScraperRun, ScrapedData
           
-          admin.site.register(ScraperTarget)
-          admin.site.register(ScraperRun)
-          admin.site.register(ScrapedData)
+          @admin.register(ScraperTarget)
+          class ScraperTargetAdmin(admin.ModelAdmin):
+              list_display = ('name', 'url', 'data_type', 'requires_js', 'is_active')
+              search_fields = ('name', 'url')
+          
+          @admin.register(ScraperRun)
+          class ScraperRunAdmin(admin.ModelAdmin):
+              list_display = ('id', 'target', 'status', 'records_scraped', 'started_at')
+          
+          @admin.register(ScrapedData)
+          class ScrapedDataAdmin(admin.ModelAdmin):
+              list_display = ('title', 'source_url', 'row_count', 'status')
           PYEOF
           
           cat > apps/scraper/__init__.py << 'PYEOF'
@@ -332,7 +357,7 @@ jobs:
           python manage.py migrate --noinput
           
           # Create a test user
-          python manage.py shell -c "from django.contrib.auth import get_user_model; User = get_user_model(); User.objects.create_superuser('admin', 'admin@example.com', 'admin123') if not User.objects.exists() else None"
+          python manage.py shell -c "from django.contrib.auth import get_user_model; User = get_user_model(); User.objects.create_superuser('admin1', 'admin@example.com', 'admin123') if not User.objects.exists() else None"
           
           # Test scraper endpoint
           python manage.py shell -c "

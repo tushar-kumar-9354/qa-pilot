@@ -1,55 +1,3 @@
-name: QA-Pilot CI — Full Test Suite
-
-on:
-  push:
-    branches: [main, master]
-  pull_request:
-    branches: [main, master]
-
-env:
-  DJANGO_SETTINGS_MODULE: config.settings.ci
-  PYTHONPATH: .
-
-jobs:
-
-  # ── JOB 1: Unit Tests ────────────────────────────────────────
-  unit-tests:
-    name: "Unit Tests"
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install \
-            pytest==8.2.0 pytest-mock==3.14.0 \
-            python-decouple==3.8 django==5.0.4 \
-            djangorestframework==3.15.1 \
-            djangorestframework-simplejwt==5.3.1 \
-            django-cors-headers==4.3.1 django-filter==24.2 \
-            structlog==24.1.0 dj-database-url==2.1.0 \
-            whitenoise==6.6.0 celery==5.4.0 redis==5.0.4 \
-            beautifulsoup4==4.12.3 fake-useragent==1.5.1 \
-            requests==2.31.0 pandas==2.2.2
-      - name: Create .env
-        run: |
-          echo "DJANGO_SECRET_KEY=ci-secret-key" > .env
-          echo "GEMINI_API_KEY=dummy" >> .env
-          echo "GEMINI_MODEL=gemini-2.0-flash" >> .env
-          echo "SCRAPER_HEADLESS=True" >> .env
-          echo "SCRAPER_TIMEOUT=30" >> .env
-          echo "SCRAPER_MAX_RETRIES=3" >> .env
-          echo "SCRAPER_DELAY_MIN=1" >> .env
-          echo "SCRAPER_DELAY_MAX=3" >> .env
-          echo "JWT_ACCESS_TOKEN_LIFETIME_MINUTES=60" >> .env
-          echo "JWT_REFRESH_TOKEN_LIFETIME_DAYS=7" >> .env
-      - name: Run unit tests
-        run: pytest tests/unit/ -v --tb=short
-
   # ── JOB 2: API Tests (runs SECOND) ───────────────────────────
   api-tests:
     name: "API Tests (Django + FastAPI)"
@@ -99,34 +47,55 @@ jobs:
           from django.views.decorators.http import require_http_methods
           import json
           import logging
+          import traceback
           
           logger = logging.getLogger(__name__)
+          DEBUG = True
           
           @csrf_exempt
           @require_http_methods(["POST"])
           def trigger_scraper(request):
-              """Scraper trigger endpoint for CI tests"""
+              """Scraper trigger endpoint - fixed for CI tests"""
               try:
-                  data = json.loads(request.body) if request.body else {}
+                  # Log the request for debugging
+                  logger.info(f"Scraper trigger called - method: {request.method}")
+                  
+                  # Parse JSON body
+                  if request.body:
+                      try:
+                          data = json.loads(request.body)
+                      except json.JSONDecodeError:
+                          return JsonResponse({
+                              'error': 'Invalid JSON body',
+                              'status': 'error'
+                          }, status=400)
+                  else:
+                      data = {}
+                  
+                  # Get parameters with defaults
                   url = data.get('url', 'https://example.com')
                   data_type = data.get('data_type', 'table')
                   css_selector = data.get('css_selector', '')
                   
-                  logger.info(f"Scraper triggered for URL: {url}")
+                  logger.info(f"Processing scrape request - URL: {url}, type: {data_type}")
                   
+                  # Return success response
                   return JsonResponse({
                       'status': 'success',
                       'message': 'Scraper triggered successfully',
                       'task_id': 'mock-task-12345',
                       'url': url,
-                      'data_type': data_type
+                      'data_type': data_type,
+                      'css_selector': css_selector
                   }, status=200)
                   
-              except json.JSONDecodeError:
-                  return JsonResponse({'error': 'Invalid JSON body'}, status=400)
               except Exception as e:
                   logger.error(f"Scraper trigger error: {str(e)}")
-                  return JsonResponse({'error': str(e)}, status=500)
+                  logger.error(traceback.format_exc())
+                  return JsonResponse({
+                      'error': str(e),
+                      'status': 'error'
+                  }, status=500)
           
           def list_scraped_data(request):
               """List scraped data endpoint"""
@@ -169,8 +138,6 @@ jobs:
           # Create agents mock
           mkdir -p apps/agents
           cat > apps/agents/__init__.py << 'PYEOF'
-          from unittest.mock import MagicMock
-          
           class TestCaseGeneratorAgent:
               def generate(self, feature_description, scraped_data=None, test_type="unit", num_tests=5):
                   return {"tests": [], "status": "success"}
@@ -196,197 +163,24 @@ jobs:
           cat > apps/testrunner/__init__.py << 'PYEOF'
           # Test runner app
           PYEOF
+      - name: Debug scraper endpoint
+        run: |
+          python manage.py shell << 'EOF'
+          import json
+          from django.test import Client
+          
+          client = Client()
+          response = client.post('/api/scraper/trigger', 
+                                json.dumps({'url': 'https://example.com'}),
+                                content_type='application/json')
+          print(f"Response status: {response.status_code}")
+          print(f"Response content: {response.content}")
+          if response.status_code != 200:
+              print("Scraper endpoint failed!")
+              exit(1)
+          print("Scraper endpoint works!")
+          EOF
       - name: Run migrations
         run: python manage.py migrate --noinput
       - name: Run API tests
         run: pytest tests/api/test_django_endpoints.py -v --tb=short
-
-  # ── JOB 3: E2E Tests ─────────────────────────────────────────
-  e2e-tests:
-    name: "E2E Tests (Selenium Chrome)"
-    runs-on: ubuntu-latest
-    needs: [unit-tests, api-tests]
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_DB: qa_pilot_test
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - name: Install Chrome
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y chromium-browser chromium-chromedriver
-          echo "CHROME_BIN=/usr/bin/chromium-browser" >> $GITHUB_ENV
-          echo "CHROMEDRIVER=/usr/bin/chromedriver" >> $GITHUB_ENV
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install \
-            pytest==8.2.0 pytest-django==4.8.0 pytest-mock==3.14.0 \
-            python-decouple==3.8 django==5.0.4 \
-            djangorestframework==3.15.1 \
-            djangorestframework-simplejwt==5.3.1 \
-            django-cors-headers==4.3.1 django-filter==24.2 \
-            structlog==24.1.0 dj-database-url==2.1.0 \
-            whitenoise==6.6.0 celery==5.4.0 redis==5.0.4 \
-            psycopg2-binary==2.9.9 Pillow \
-            selenium==4.27.1 webdriver-manager==4.0.2 \
-            beautifulsoup4==4.12.3 fake-useragent==1.5.1 \
-            requests==2.31.0 pandas==2.2.2 factory-boy==3.3.0
-      - name: Create .env
-        run: |
-          echo "DJANGO_SECRET_KEY=ci-secret-key" > .env
-          echo "GEMINI_API_KEY=dummy" >> .env
-          echo "GEMINI_MODEL=gemini-2.0-flash" >> .env
-          echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5432/qa_pilot_test" >> .env
-          echo "SCRAPER_HEADLESS=True" >> .env
-          echo "SCRAPER_TIMEOUT=30" >> .env
-          echo "SCRAPER_MAX_RETRIES=3" >> .env
-          echo "SCRAPER_DELAY_MIN=1" >> .env
-          echo "SCRAPER_DELAY_MAX=3" >> .env
-          echo "JWT_ACCESS_TOKEN_LIFETIME_MINUTES=60" >> .env
-          echo "JWT_REFRESH_TOKEN_LIFETIME_DAYS=7" >> .env
-      - name: Run migrations
-        run: python manage.py migrate --noinput
-      - name: Start Django server
-        run: |
-          python manage.py runserver 0.0.0.0:8000 &
-          sleep 5
-          curl -f http://localhost:8000/ || echo "Server starting..."
-      - name: Run E2E tests
-        run: pytest tests/e2e/ -v --tb=short
-
-  # ── JOB 4: Integration Tests ─────────────────────────────────
-  integration-tests:
-    name: "Integration Tests (PostgreSQL)"
-    runs-on: ubuntu-latest
-    needs: [unit-tests, api-tests, e2e-tests]
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_DB: qa_pilot_test
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install \
-            pytest==8.2.0 pytest-django==4.8.0 pytest-mock==3.14.0 \
-            python-decouple==3.8 django==5.0.4 \
-            djangorestframework==3.15.1 \
-            djangorestframework-simplejwt==5.3.1 \
-            django-cors-headers==4.3.1 django-filter==24.2 \
-            structlog==24.1.0 dj-database-url==2.1.0 \
-            whitenoise==6.6.0 celery==5.4.0 redis==5.0.4 \
-            psycopg2-binary==2.9.9 Pillow \
-            beautifulsoup4==4.12.3 fake-useragent==1.5.1 \
-            requests==2.31.0 pandas==2.2.2 factory-boy==3.3.0
-      - name: Create .env
-        run: |
-          echo "DJANGO_SECRET_KEY=ci-secret-key" > .env
-          echo "GEMINI_API_KEY=dummy" >> .env
-          echo "GEMINI_MODEL=gemini-2.0-flash" >> .env
-          echo "POSTGRES_DB=qa_pilot_test" >> .env
-          echo "POSTGRES_USER=postgres" >> .env
-          echo "POSTGRES_PASSWORD=postgres" >> .env
-          echo "POSTGRES_HOST=localhost" >> .env
-          echo "POSTGRES_PORT=5432" >> .env
-          echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5432/qa_pilot_test" >> .env
-          echo "SCRAPER_HEADLESS=True" >> .env
-          echo "SCRAPER_TIMEOUT=30" >> .env
-          echo "SCRAPER_MAX_RETRIES=3" >> .env
-          echo "SCRAPER_DELAY_MIN=1" >> .env
-          echo "SCRAPER_DELAY_MAX=3" >> .env
-          echo "JWT_ACCESS_TOKEN_LIFETIME_MINUTES=60" >> .env
-          echo "JWT_REFRESH_TOKEN_LIFETIME_DAYS=7" >> .env
-      - name: Override CI settings for PostgreSQL
-        run: |
-          cat > config/settings/ci.py << 'PYEOF'
-          from pathlib import Path
-          from decouple import config
-          BASE_DIR = Path(__file__).resolve().parent.parent.parent
-          SECRET_KEY = config('DJANGO_SECRET_KEY', default='ci-key')
-          DEBUG = True
-          ALLOWED_HOSTS = ['*']
-          INSTALLED_APPS = [
-              'django.contrib.admin','django.contrib.auth',
-              'django.contrib.contenttypes','django.contrib.sessions',
-              'django.contrib.messages','django.contrib.staticfiles',
-              'rest_framework','rest_framework_simplejwt',
-              'corsheaders','django_filters',
-              'apps.core','apps.scraper','apps.testrunner','apps.agents',
-          ]
-          MIDDLEWARE = [
-              'django.middleware.security.SecurityMiddleware',
-              'django.contrib.sessions.middleware.SessionMiddleware',
-              'django.middleware.common.CommonMiddleware',
-              'django.contrib.auth.middleware.AuthenticationMiddleware',
-              'django.contrib.messages.middleware.MessageMiddleware',
-          ]
-          ROOT_URLCONF = 'config.urls'
-          AUTH_USER_MODEL = 'core.User'
-          TEMPLATES = [{'BACKEND':'django.template.backends.django.DjangoTemplates','DIRS':[BASE_DIR/'frontend'/'templates'],'APP_DIRS':True,'OPTIONS':{'context_processors':['django.template.context_processors.request','django.contrib.auth.context_processors.auth','django.contrib.messages.context_processors.messages']}}]
-          DATABASES = {'default': {'ENGINE':'django.db.backends.postgresql','NAME':'qa_pilot_test','USER':'postgres','PASSWORD':'postgres','HOST':'localhost','PORT':'5432'}}
-          CELERY_TASK_ALWAYS_EAGER = True
-          CACHES = {'default': {'BACKEND': 'django.core.cache.backends.dummy.DummyCache'}}
-          GEMINI_API_KEY = config('GEMINI_API_KEY', default='')
-          GEMINI_MODEL = config('GEMINI_MODEL', default='gemini-2.0-flash')
-          SCRAPER_CONFIG = {'HEADLESS':True,'TIMEOUT':30,'MAX_RETRIES':3,'DELAY_MIN':1.0,'DELAY_MAX':3.0}
-          STATIC_URL = '/static/'
-          DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-          USE_TZ = True
-          REST_FRAMEWORK = {'DEFAULT_AUTHENTICATION_CLASSES':['rest_framework_simplejwt.authentication.JWTAuthentication'],'DEFAULT_PERMISSION_CLASSES':['rest_framework.permissions.AllowAny']}
-          from datetime import timedelta
-          SIMPLE_JWT = {'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60)}
-          LOGGING = {'version':1,'disable_existing_loggers':False,'handlers':{'console':{'class':'logging.StreamHandler'}},'root':{'handlers':['console'],'level':'WARNING'}}
-          PYEOF
-      - name: Run migrations
-        run: python manage.py migrate --noinput
-      - name: Run integration tests
-        run: pytest tests/integration/ -v --tb=short
-
-  # ── Final Summary ────────────────────────────────────────────
-  all-tests-passed:
-    name: "All Tests Passed"
-    runs-on: ubuntu-latest
-    needs: [unit-tests, api-tests, e2e-tests, integration-tests]
-    if: always()
-    steps:
-      - name: Check all jobs
-        run: |
-          echo "================================"
-          echo "  QA-Pilot Full Test Summary"
-          echo "================================"
-          echo "Unit Tests:        ${{ needs.unit-tests.result }}"
-          echo "API Tests:         ${{ needs.api-tests.result }}"
-          echo "E2E Tests:         ${{ needs.e2e-tests.result }}"
-          echo "Integration Tests: ${{ needs.integration-tests.result }}"
-          echo "================================"

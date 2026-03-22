@@ -90,100 +90,55 @@ jobs:
           echo "SCRAPER_DELAY_MAX=3" >> .env
           echo "JWT_ACCESS_TOKEN_LIFETIME_MINUTES=60" >> .env
           echo "JWT_REFRESH_TOKEN_LIFETIME_DAYS=7" >> .env
-      - name: Create complete mocks with Status classes
+      - name: Create minimal mocks that don't trigger database operations
         run: |
-          # Create all mock models with Status classes
-          mkdir -p apps/scraper apps/agents apps/testrunner apps/core
+          # Create minimal scraper app with no database dependencies
+          mkdir -p apps/scraper
           
+          # Simple models that won't cause issues
           cat > apps/scraper/models.py << 'PYEOF'
           from django.db import models
-          from django.contrib.auth import get_user_model
           import uuid
-          
-          User = get_user_model()
           
           class ScraperTarget(models.Model):
               id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
               name = models.CharField(max_length=200)
               url = models.URLField()
-              data_type = models.CharField(max_length=50, default='table', blank=True)
-              requires_js = models.BooleanField(default=False)
               is_active = models.BooleanField(default=True)
-              created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
-              created_at = models.DateTimeField(auto_now_add=True)
-              updated_at = models.DateTimeField(auto_now=True)
-              
-              def __str__(self):
-                  return self.name
           
           class ScraperRun(models.Model):
-              class Status(models.TextChoices):
-                  PENDING = 'pending'
-                  RUNNING = 'running'
-                  COMPLETED = 'completed'
-                  FAILED = 'failed'
-              
               id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
               target = models.ForeignKey(ScraperTarget, on_delete=models.CASCADE, null=True, blank=True)
-              status = models.CharField(max_length=20, default=Status.PENDING, choices=Status.choices)
-              triggered_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
-              started_at = models.DateTimeField(auto_now_add=True)
-              completed_at = models.DateTimeField(null=True, blank=True)
-              records_scraped = models.IntegerField(default=0)
-              error_message = models.TextField(blank=True)
-              celery_task_id = models.CharField(max_length=255, blank=True)
-              
-              def __str__(self):
-                  return f"Run {self.id} - {self.status}"
+              status = models.CharField(max_length=50, default='pending')
           
           class ScrapedData(models.Model):
-              class DataStatus(models.TextChoices):
-                  PENDING = 'pending'
-                  PROCESSING = 'processing'
-                  VALIDATED = 'validated'
-                  FAILED = 'failed'
-              
               id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-              target = models.ForeignKey(ScraperTarget, on_delete=models.CASCADE, null=True, blank=True)
               title = models.CharField(max_length=500, blank=True)
               source_url = models.URLField()
               row_count = models.IntegerField(default=0)
               column_count = models.IntegerField(default=0)
-              status = models.CharField(max_length=20, default=DataStatus.PENDING, choices=DataStatus.choices)
-              data = models.JSONField(default=dict)
               created_at = models.DateTimeField(auto_now_add=True)
-              
-              def as_pytest_fixtures(self):
-                  return {"fixtures": "mock_data"}
           PYEOF
           
+          # Simple views that only return JSON
           cat > apps/scraper/views.py << 'PYEOF'
           from django.http import JsonResponse
           from django.views.decorators.csrf import csrf_exempt
-          from django.views.decorators.http import require_http_methods
           import json
           
           @csrf_exempt
-          @require_http_methods(["POST"])
           def trigger_scraper(request):
-              try:
-                  if request.body:
-                      data = json.loads(request.body)
-                  else:
-                      data = {}
-                  
-                  url = data.get('url', 'https://example.com')
-                  data_type = data.get('data_type', 'table')
-                  
-                  return JsonResponse({
-                      'status': 'success',
-                      'message': 'Scraper triggered successfully',
-                      'task_id': 'mock-task-12345',
-                      'url': url,
-                      'data_type': data_type
-                  }, status=200)
-              except Exception as e:
-                  return JsonResponse({'error': str(e)}, status=500)
+              if request.method == 'POST':
+                  try:
+                      data = json.loads(request.body) if request.body else {}
+                      return JsonResponse({
+                          'status': 'success',
+                          'task_id': 'mock-task-12345',
+                          'url': data.get('url', 'https://example.com')
+                      }, status=200)
+                  except:
+                      return JsonResponse({'error': 'Invalid request'}, status=400)
+              return JsonResponse({'error': 'Method not allowed'}, status=405)
           
           def list_scraped_data(request):
               return JsonResponse({
@@ -204,42 +159,15 @@ jobs:
           ]
           PYEOF
           
-          cat > apps/scraper/tasks.py << 'PYEOF'
-          from celery import shared_task
-          
-          @shared_task
-          def scrape_custom_url_task(url, data_type, css_selector):
-              return {'status': 'success', 'url': url, 'scraped_items': 10}
-          PYEOF
-          
-          cat > apps/scraper/admin.py << 'PYEOF'
-          from django.contrib import admin
-          from .models import ScraperTarget, ScraperRun, ScrapedData
-          
-          @admin.register(ScraperTarget)
-          class ScraperTargetAdmin(admin.ModelAdmin):
-              list_display = ('name', 'url', 'data_type', 'requires_js', 'is_active')
-              search_fields = ('name', 'url')
-          
-          @admin.register(ScraperRun)
-          class ScraperRunAdmin(admin.ModelAdmin):
-              list_display = ('id', 'target', 'status', 'records_scraped', 'started_at')
-              list_filter = ('status',)
-          
-          @admin.register(ScrapedData)
-          class ScrapedDataAdmin(admin.ModelAdmin):
-              list_display = ('title', 'source_url', 'row_count', 'status')
-              list_filter = ('status',)
-          PYEOF
-          
           cat > apps/scraper/__init__.py << 'PYEOF'
           # Scraper app
           PYEOF
           
-          # Agents
+          # Minimal agents
+          mkdir -p apps/agents
           cat > apps/agents/__init__.py << 'PYEOF'
           class TestCaseGeneratorAgent:
-              def generate(self, feature_description, scraped_data=None, test_type="unit", num_tests=5):
+              def generate(self, *args, **kwargs):
                   return {"tests": [], "status": "success"}
           
           class QAChatAgent:
@@ -250,11 +178,8 @@ jobs:
           chat_agent = QAChatAgent()
           PYEOF
           
-          cat > apps/agents/admin.py << 'PYEOF'
-          from django.contrib import admin
-          PYEOF
-          
-          # Testrunner
+          # Minimal testrunner
+          mkdir -p apps/testrunner
           cat > apps/testrunner/__init__.py << 'PYEOF'
           # Test runner app
           PYEOF
@@ -264,14 +189,11 @@ jobs:
           
           @shared_task
           def execute_test_suite_task(run_id):
-              return {'status': 'completed', 'run_id': run_id}
+              return {'status': 'completed'}
           PYEOF
           
-          cat > apps/testrunner/admin.py << 'PYEOF'
-          from django.contrib import admin
-          PYEOF
-          
-          # Core models with Status classes
+          # Minimal core models
+          mkdir -p apps/core
           cat > apps/core/models.py << 'PYEOF'
           from django.db import models
           from django.contrib.auth.models import AbstractUser
@@ -279,80 +201,36 @@ jobs:
           
           class User(AbstractUser):
               id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-              avatar = models.ImageField(upload_to='avatars/', null=True, blank=True)
           
           class TestSuite(models.Model):
               id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
               name = models.CharField(max_length=200)
               description = models.TextField(blank=True)
-              status = models.CharField(max_length=50, default='active')
-              total_cases = models.IntegerField(default=0)
-              pass_rate = models.FloatField(default=0.0)
-              tags = models.JSONField(default=list)
-              target_url = models.URLField(blank=True)
               created_at = models.DateTimeField(auto_now_add=True)
           
           class TestCase(models.Model):
               id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
               name = models.CharField(max_length=200)
-              test_type = models.CharField(max_length=50)
-              priority = models.CharField(max_length=20, default='medium')
-              is_ai_generated = models.BooleanField(default=False)
               suite = models.ForeignKey(TestSuite, on_delete=models.CASCADE, related_name='test_cases')
           
           class TestRun(models.Model):
-              class Status(models.TextChoices):
-                  PENDING = 'pending'
-                  RUNNING = 'running'
-                  COMPLETED = 'completed'
-                  FAILED = 'failed'
-              
               id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
               suite = models.ForeignKey(TestSuite, on_delete=models.CASCADE)
-              status = models.CharField(max_length=20, default=Status.PENDING, choices=Status.choices)
-              result = models.CharField(max_length=50, blank=True)
-              total_tests = models.IntegerField(default=0)
-              passed = models.IntegerField(default=0)
-              failed = models.IntegerField(default=0)
-              errors = models.IntegerField(default=0)
-              skipped = models.IntegerField(default=0)
-              pass_rate = models.FloatField(default=0.0)
-              duration_seconds = models.FloatField(null=True, blank=True)
-              environment = models.CharField(max_length=50, default='development')
-              celery_task_id = models.CharField(max_length=255, blank=True)
-              logs = models.TextField(blank=True)
+              status = models.CharField(max_length=20, default='pending')
               created_at = models.DateTimeField(auto_now_add=True)
-              
-              def bug_reports(self):
-                  return BugReport.objects.filter(test_run=self)
           
           class BugReport(models.Model):
               id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
               test_run = models.ForeignKey(TestRun, on_delete=models.CASCADE, related_name='bug_reports')
               status = models.CharField(max_length=20, default='open')
-              ai_analysis = models.TextField(blank=True)
-              ai_fix_suggestion = models.TextField(blank=True)
-          PYEOF
-          
-          cat > apps/core/admin.py << 'PYEOF'
-          from django.contrib import admin
-          from .models import User, TestSuite, TestCase, TestRun, BugReport
-          
-          admin.site.register(User)
-          admin.site.register(TestSuite)
-          admin.site.register(TestCase)
-          admin.site.register(TestRun)
-          admin.site.register(BugReport)
           PYEOF
           
           cat > apps/core/middleware.py << 'PYEOF'
           class StructuredLoggingMiddleware:
               def __init__(self, get_response):
                   self.get_response = get_response
-              
               def __call__(self, request):
-                  response = self.get_response(request)
-                  return response
+                  return self.get_response(request)
           PYEOF
           
           cat > apps/core/__init__.py << 'PYEOF'

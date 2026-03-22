@@ -1,4 +1,17 @@
-  # ── JOB 1: API Tests (runs FIRST) ───────────────────────────
+name: QA-Pilot CI — Full Test Suite
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+env:
+  DJANGO_SETTINGS_MODULE: config.settings.ci
+  PYTHONPATH: .
+
+jobs:
+    # ── JOB 1: API Tests (runs FIRST) ───────────────────────────
   api-tests:
     name: "API Tests (Django + FastAPI)"
     runs-on: ubuntu-latest

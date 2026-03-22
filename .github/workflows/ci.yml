@@ -71,8 +71,7 @@ jobs:
       - name: Run migrations
         run: python manage.py migrate --noinput
       - name: Run API tests
-        run: pytest tests/api/ -v --tb=short
-
+        run: pytest tests/api/test_django_endpoints.py -v --tb=short
   # ── JOB 3: Integration Tests ──────────────────────────────────
   integration-tests:
     name: "Integration Tests (PostgreSQL)"

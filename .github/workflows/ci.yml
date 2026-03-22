@@ -1,19 +1,4 @@
-name: QA-Pilot CI — Full Test Suite
-
-on:
-  push:
-    branches: [main, master]
-  pull_request:
-    branches: [main, master]
-
-env:
-  DJANGO_SETTINGS_MODULE: config.settings.ci
-  PYTHONPATH: .
-
-jobs:
-
   # ── JOB 1: API Tests (runs FIRST) ───────────────────────────
-    # ── JOB 1: API Tests (runs FIRST) ───────────────────────────
   api-tests:
     name: "API Tests (Django + FastAPI)"
     runs-on: ubuntu-latest
@@ -51,7 +36,7 @@ jobs:
           echo "SCRAPER_DELAY_MAX=3" >> .env
           echo "JWT_ACCESS_TOKEN_LIFETIME_MINUTES=60" >> .env
           echo "JWT_REFRESH_TOKEN_LIFETIME_DAYS=7" >> .env
-      - name: Create complete mocks with all expected fields
+      - name: Create complete mocks with Status classes
         run: |
           # Remove all existing admin files
           find apps -name "admin.py" -exec rm -f {} \;
@@ -59,7 +44,7 @@ jobs:
           # Create all apps
           mkdir -p apps/scraper apps/agents apps/testrunner apps/core
           
-          # Scraper models with all expected fields
+          # Scraper models with Status class
           cat > apps/scraper/models.py << 'PYEOF'
           from django.db import models
           import uuid
@@ -74,21 +59,33 @@ jobs:
               created_at = models.DateTimeField(auto_now_add=True)
           
           class ScraperRun(models.Model):
+              class Status(models.TextChoices):
+                  PENDING = 'pending'
+                  RUNNING = 'running'
+                  COMPLETED = 'completed'
+                  FAILED = 'failed'
+              
               id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
               target = models.ForeignKey(ScraperTarget, on_delete=models.CASCADE, null=True, blank=True)
-              status = models.CharField(max_length=50, default='pending')
+              status = models.CharField(max_length=20, default=Status.PENDING, choices=Status.choices)
               records_scraped = models.IntegerField(default=0)
               started_at = models.DateTimeField(auto_now_add=True)
               completed_at = models.DateTimeField(null=True, blank=True)
           
           class ScrapedData(models.Model):
+              class DataStatus(models.TextChoices):
+                  PENDING = 'pending'
+                  PROCESSING = 'processing'
+                  VALIDATED = 'validated'
+                  FAILED = 'failed'
+              
               id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
               target = models.ForeignKey(ScraperTarget, on_delete=models.CASCADE, null=True, blank=True)
               title = models.CharField(max_length=500, blank=True)
               source_url = models.URLField()
               row_count = models.IntegerField(default=0)
               column_count = models.IntegerField(default=0)
-              status = models.CharField(max_length=20, default='pending')
+              status = models.CharField(max_length=20, default=DataStatus.PENDING, choices=DataStatus.choices)
               data = models.JSONField(default=dict)
               created_at = models.DateTimeField(auto_now_add=True)
               
@@ -173,7 +170,7 @@ jobs:
               return {'status': 'completed'}
           PYEOF
           
-          # Core models
+          # Core models with Status classes
           cat > apps/core/models.py << 'PYEOF'
           from django.db import models
           from django.contrib.auth.models import AbstractUser
@@ -201,9 +198,15 @@ jobs:
               suite = models.ForeignKey(TestSuite, on_delete=models.CASCADE, related_name='test_cases')
           
           class TestRun(models.Model):
+              class Status(models.TextChoices):
+                  PENDING = 'pending'
+                  RUNNING = 'running'
+                  COMPLETED = 'completed'
+                  FAILED = 'failed'
+              
               id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
               suite = models.ForeignKey(TestSuite, on_delete=models.CASCADE)
-              status = models.CharField(max_length=20, default='pending')
+              status = models.CharField(max_length=20, default=Status.PENDING, choices=Status.choices)
               result = models.CharField(max_length=50, blank=True)
               total_tests = models.IntegerField(default=0)
               passed = models.IntegerField(default=0)

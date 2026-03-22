@@ -92,10 +92,58 @@ jobs:
           echo "JWT_REFRESH_TOKEN_LIFETIME_DAYS=7" >> .env
       - name: Create complete mocks for all apps
         run: |
-          # Mock scraper module - prevent selenium import
+          # Mock scraper module with all required models
           mkdir -p apps/scraper
+          
           cat > apps/scraper/__init__.py << 'PYEOF'
-          # Mock scraper module - no selenium dependency
+          # Mock scraper module
+          PYEOF
+          
+          cat > apps/scraper/models.py << 'PYEOF'
+          from django.db import models
+          import uuid
+          
+          class ScraperTarget(models.Model):
+              id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+              name = models.CharField(max_length=200)
+              url = models.URLField()
+              is_active = models.BooleanField(default=True)
+              created_at = models.DateTimeField(auto_now_add=True)
+              
+              def __str__(self):
+                  return self.name
+          
+          class ScraperRun(models.Model):
+              id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+              target = models.ForeignKey(ScraperTarget, on_delete=models.CASCADE, null=True, blank=True)
+              status = models.CharField(max_length=50, default='pending')
+              started_at = models.DateTimeField(auto_now_add=True)
+              completed_at = models.DateTimeField(null=True, blank=True)
+              items_scraped = models.IntegerField(default=0)
+              error_message = models.TextField(blank=True)
+              
+              def __str__(self):
+                  return f"Run {self.id} - {self.status}"
+          
+          class ScrapedData(models.Model):
+              class DataStatus(models.TextChoices):
+                  PENDING = 'pending'
+                  PROCESSING = 'processing'
+                  VALIDATED = 'validated'
+                  FAILED = 'failed'
+              
+              id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+              target = models.ForeignKey(ScraperTarget, on_delete=models.CASCADE, null=True, blank=True)
+              title = models.CharField(max_length=500, blank=True)
+              source_url = models.URLField()
+              row_count = models.IntegerField(default=0)
+              column_count = models.IntegerField(default=0)
+              status = models.CharField(max_length=20, default=DataStatus.PENDING)
+              data = models.JSONField(default=dict)
+              created_at = models.DateTimeField(auto_now_add=True)
+              
+              def as_pytest_fixtures(self):
+                  return {"fixtures": "mock_data"}
           PYEOF
           
           cat > apps/scraper/views.py << 'PYEOF'
@@ -110,7 +158,7 @@ jobs:
           @csrf_exempt
           @require_http_methods(["POST"])
           def trigger_scraper(request):
-              """Mock scraper trigger - no selenium required"""
+              """Mock scraper trigger - no database access"""
               try:
                   if request.body:
                       data = json.loads(request.body)
@@ -132,6 +180,7 @@ jobs:
                   return JsonResponse({'error': str(e)}, status=500)
           
           def list_scraped_data(request):
+              """List scraped data - pure mock"""
               return JsonResponse({
                   'total': 0,
                   'results': [],
@@ -150,7 +199,6 @@ jobs:
           ]
           PYEOF
           
-          # Mock scraper tasks - no selenium
           cat > apps/scraper/tasks.py << 'PYEOF'
           from celery import shared_task
           
@@ -161,33 +209,6 @@ jobs:
           @shared_task
           def scrape_target_task(target_id):
               return {'status': 'success', 'target_id': target_id}
-          PYEOF
-          
-          # Mock scraper models to avoid table errors
-          cat > apps/scraper/models.py << 'PYEOF'
-          from django.db import models
-          
-          class ScrapedData(models.Model):
-              class DataStatus(models.TextChoices):
-                  PENDING = 'pending'
-                  PROCESSING = 'processing'
-                  VALIDATED = 'validated'
-                  FAILED = 'failed'
-              
-              title = models.CharField(max_length=500, blank=True)
-              source_url = models.URLField()
-              row_count = models.IntegerField(default=0)
-              column_count = models.IntegerField(default=0)
-              status = models.CharField(max_length=20, default=DataStatus.PENDING)
-              created_at = models.DateTimeField(auto_now_add=True)
-              
-              def as_pytest_fixtures(self):
-                  return {}
-          
-          class ScraperTarget(models.Model):
-              name = models.CharField(max_length=200)
-              url = models.URLField()
-              is_active = models.BooleanField(default=True)
           PYEOF
           
           # Mock agents
@@ -227,7 +248,7 @@ jobs:
               return {'status': 'completed', 'run_id': run_id}
           PYEOF
           
-          # Mock core models to avoid missing tables
+          # Mock core models
           mkdir -p apps/core
           cat > apps/core/models.py << 'PYEOF'
           from django.db import models
@@ -289,6 +310,27 @@ jobs:
               status = models.CharField(max_length=20, default='open')
               ai_analysis = models.TextField(blank=True)
               ai_fix_suggestion = models.TextField(blank=True)
+          PYEOF
+          
+          # Create admin.py to avoid import errors
+          cat > apps/scraper/admin.py << 'PYEOF'
+          from django.contrib import admin
+          from .models import ScraperTarget, ScraperRun, ScrapedData
+          
+          admin.site.register(ScraperTarget)
+          admin.site.register(ScraperRun)
+          admin.site.register(ScrapedData)
+          PYEOF
+          
+          cat > apps/core/admin.py << 'PYEOF'
+          from django.contrib import admin
+          from .models import User, TestSuite, TestCase, TestRun, BugReport
+          
+          admin.site.register(User)
+          admin.site.register(TestSuite)
+          admin.site.register(TestCase)
+          admin.site.register(TestRun)
+          admin.site.register(BugReport)
           PYEOF
           
           # Create middleware

@@ -55,6 +55,173 @@ jobs:
         run: pytest tests/unit/ -v --tb=short
 
   # ── JOB 2: Integration Tests (PostgreSQL service) ─────────────
+  integration-tests:
+    name: "Integration Tests (PostgreSQL)"
+    runs-on: ubuntu-latest
+    needs: unit-tests
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: qa_pilot_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install \
+            pytest==8.2.0 pytest-django==4.8.0 pytest-mock==3.14.0 \
+            python-decouple==3.8 django==5.0.4 \
+            djangorestframework==3.15.1 \
+            djangorestframework-simplejwt==5.3.1 \
+            django-cors-headers==4.3.1 django-filter==24.2 \
+            structlog==24.1.0 dj-database-url==2.1.0 \
+            whitenoise==6.6.0 celery==5.4.0 redis==5.0.4 \
+            psycopg2-binary==2.9.9 \
+            Pillow \
+            beautifulsoup4==4.12.3 fake-useragent==1.5.1 \
+            requests==2.31.0 pandas==2.2.2 factory-boy==3.3.0
+
+      - name: Create .env
+        run: |
+          echo "DJANGO_SECRET_KEY=ci-secret-key" > .env
+          echo "GEMINI_API_KEY=dummy" >> .env
+          echo "GEMINI_MODEL=gemini-2.0-flash" >> .env
+          echo "POSTGRES_DB=qa_pilot_test" >> .env
+          echo "POSTGRES_USER=postgres" >> .env
+          echo "POSTGRES_PASSWORD=postgres" >> .env
+          echo "POSTGRES_HOST=localhost" >> .env
+          echo "POSTGRES_PORT=5432" >> .env
+          echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5432/qa_pilot_test" >> .env
+          echo "SCRAPER_HEADLESS=True" >> .env
+          echo "SCRAPER_TIMEOUT=30" >> .env
+          echo "SCRAPER_MAX_RETRIES=3" >> .env
+          echo "SCRAPER_DELAY_MIN=1" >> .env
+          echo "SCRAPER_DELAY_MAX=3" >> .env
+          echo "JWT_ACCESS_TOKEN_LIFETIME_MINUTES=60" >> .env
+          echo "JWT_REFRESH_TOKEN_LIFETIME_DAYS=7" >> .env
+
+      - name: Override CI settings for PostgreSQL
+        run: |
+          cat > config/settings/ci.py << 'PYEOF'
+          from pathlib import Path
+          from decouple import config
+          BASE_DIR = Path(__file__).resolve().parent.parent.parent
+          SECRET_KEY = config('DJANGO_SECRET_KEY', default='ci-key')
+          DEBUG = True
+          ALLOWED_HOSTS = ['*']
+          INSTALLED_APPS = [
+              'django.contrib.admin','django.contrib.auth',
+              'django.contrib.contenttypes','django.contrib.sessions',
+              'django.contrib.messages','django.contrib.staticfiles',
+              'rest_framework','rest_framework_simplejwt',
+              'corsheaders','django_filters',
+              'apps.core','apps.scraper','apps.testrunner','apps.agents',
+          ]
+          MIDDLEWARE = [
+              'django.middleware.security.SecurityMiddleware',
+              'django.contrib.sessions.middleware.SessionMiddleware',
+              'django.middleware.common.CommonMiddleware',
+              'django.contrib.auth.middleware.AuthenticationMiddleware',
+              'django.contrib.messages.middleware.MessageMiddleware',
+              'apps.core.middleware.StructuredLoggingMiddleware',
+          ]
+          ROOT_URLCONF = 'config.urls'
+          AUTH_USER_MODEL = 'core.User'
+          TEMPLATES = [{'BACKEND':'django.template.backends.django.DjangoTemplates','DIRS':[BASE_DIR/'frontend'/'templates'],'APP_DIRS':True,'OPTIONS':{'context_processors':['django.template.context_processors.request','django.contrib.auth.context_processors.auth','django.contrib.messages.context_processors.messages']}}]
+          DATABASES = {'default': {'ENGINE':'django.db.backends.postgresql','NAME':'qa_pilot_test','USER':'postgres','PASSWORD':'postgres','HOST':'localhost','PORT':'5432'}}
+          CELERY_TASK_ALWAYS_EAGER = True
+          CACHES = {'default': {'BACKEND': 'django.core.cache.backends.dummy.DummyCache'}}
+          GEMINI_API_KEY = config('GEMINI_API_KEY', default='')
+          GEMINI_MODEL = config('GEMINI_MODEL', default='gemini-2.0-flash')
+          SCRAPER_CONFIG = {'HEADLESS':True,'TIMEOUT':30,'MAX_RETRIES':3,'DELAY_MIN':1.0,'DELAY_MAX':3.0}
+          STATIC_URL = '/static/'
+          DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+          USE_TZ = True
+          REST_FRAMEWORK = {'DEFAULT_AUTHENTICATION_CLASSES':['rest_framework_simplejwt.authentication.JWTAuthentication'],'DEFAULT_PERMISSION_CLASSES':['rest_framework.permissions.AllowAny']}
+          from datetime import timedelta
+          SIMPLE_JWT = {'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60)}
+          import structlog
+          structlog.configure(processors=[structlog.stdlib.add_log_level,structlog.stdlib.ProcessorFormatter.wrap_for_formatter],wrapper_class=structlog.stdlib.BoundLogger,context_class=dict,logger_factory=structlog.stdlib.LoggerFactory())
+          LOGGING = {'version':1,'disable_existing_loggers':False,'handlers':{'console':{'class':'logging.StreamHandler'}},'root':{'handlers':['console'],'level':'WARNING'}}
+          PYEOF
+
+      - name: Run migrations
+        run: python manage.py migrate --noinput
+
+      - name: Run integration tests
+        run: pytest tests/integration/ -v --tb=short
+
+  # ── JOB 3: API Tests (Django TestClient) ─────────────────────
+  api-tests:
+    name: "API Tests (Django TestClient)"
+    runs-on: ubuntu-latest
+    needs: unit-tests
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install \
+            pytest==8.2.0 pytest-django==4.8.0 pytest-mock==3.14.0 \
+            pytest-asyncio==0.23.8 \
+            python-decouple==3.8 django==5.0.4 \
+            djangorestframework==3.15.1 \
+            djangorestframework-simplejwt==5.3.1 \
+            django-cors-headers==4.3.1 django-filter==24.2 \
+            structlog==24.1.0 dj-database-url==2.1.0 \
+            whitenoise==6.6.0 celery==5.4.0 redis==5.0.4 \
+            Pillow \
+            httpx==0.27.2 \
+            fastapi==0.115.11 \
+            uvicorn==0.34.0 \
+            beautifulsoup4==4.12.3 fake-useragent==1.5.1 \
+            requests==2.31.0 pandas==2.2.2
+
+      - name: Create .env
+        run: |
+          echo "DJANGO_SECRET_KEY=ci-secret-key" > .env
+          echo "GEMINI_API_KEY=dummy" >> .env
+          echo "GEMINI_MODEL=gemini-2.0-flash" >> .env
+          echo "SCRAPER_HEADLESS=True" >> .env
+          echo "SCRAPER_TIMEOUT=30" >> .env
+          echo "SCRAPER_MAX_RETRIES=3" >> .env
+          echo "SCRAPER_DELAY_MIN=1" >> .env
+          echo "SCRAPER_DELAY_MAX=3" >> .env
+          echo "JWT_ACCESS_TOKEN_LIFETIME_MINUTES=60" >> .env
+          echo "JWT_REFRESH_TOKEN_LIFETIME_DAYS=7" >> .env
+
+      - name: Run migrations
+        run: python manage.py migrate --noinput
+
+      - name: Run API tests
+        run: pytest tests/api/ -v --tb=short
+
+  # ── JOB 4: E2E Tests (Selenium + Chrome) ─────────────────────
   e2e-tests:
     name: "E2E Tests (Selenium Chrome)"
     runs-on: ubuntu-latest
@@ -131,231 +298,6 @@ jobs:
 
       - name: Run E2E tests
         run: pytest tests/e2e/ -v --tb=short
-
-    # ── JOB 2: Integration Tests (PostgreSQL service) ─────────────
-  integration-tests:
-    name: "Integration Tests (PostgreSQL)"
-    runs-on: ubuntu-latest
-    needs: unit-tests
-
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_DB: qa_pilot_test
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install \
-            pytest==8.2.0 pytest-django==4.8.0 pytest-mock==3.14.0 \
-            python-decouple==3.8 django==5.0.4 \
-            djangorestframework==3.15.1 \
-            djangorestframework-simplejwt==5.3.1 \
-            django-cors-headers==4.3.1 django-filter==24.2 \
-            structlog==24.1.0 dj-database-url==2.1.0 \
-            whitenoise==6.6.0 celery==5.4.0 redis==5.0.4 \
-            psycopg2-binary==2.9.9 \
-            Pillow \
-            beautifulsoup4==4.12.3 fake-useragent==1.5.1 \
-            requests==2.31.0 pandas==2.2.2 factory-boy==3.3.0
-
-      # ... rest of the job steps remain the same ...
-
-
-  # ── JOB 3: API Tests (Django TestClient) ─────────────────────
-  # ── JOB 3: API Tests (Django TestClient) ─────────────────────
-  api-tests:
-    name: "API Tests (Django TestClient)"
-    runs-on: ubuntu-latest
-    needs: unit-tests
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install \
-            pytest==8.2.0 pytest-django==4.8.0 pytest-mock==3.14.0 \
-            pytest-asyncio==0.23.8 \
-            python-decouple==3.8 django==5.0.4 \
-            djangorestframework==3.15.1 \
-            djangorestframework-simplejwt==5.3.1 \
-            django-cors-headers==4.3.1 django-filter==24.2 \
-            structlog==24.1.0 dj-database-url==2.1.0 \
-            whitenoise==6.6.0 celery==5.4.0 redis==5.0.4 \
-            Pillow \
-            httpx==0.27.2 \
-            fastapi==0.115.11 \
-            uvicorn==0.34.0 \
-            beautifulsoup4==4.12.3 fake-useragent==1.5.1 \
-            requests==2.31.0 pandas==2.2.2
-
-      - name: Create .env
-        run: |
-          echo "DJANGO_SECRET_KEY=ci-secret-key" > .env
-          echo "GEMINI_API_KEY=dummy" >> .env
-          echo "GEMINI_MODEL=gemini-2.0-flash" >> .env
-          echo "SCRAPER_HEADLESS=True" >> .env
-          echo "SCRAPER_TIMEOUT=30" >> .env
-          echo "SCRAPER_MAX_RETRIES=3" >> .env
-          echo "SCRAPER_DELAY_MIN=1" >> .env
-          echo "SCRAPER_DELAY_MAX=3" >> .env
-          echo "JWT_ACCESS_TOKEN_LIFETIME_MINUTES=60" >> .env
-          echo "JWT_REFRESH_TOKEN_LIFETIME_DAYS=7" >> .env
-
-      - name: Run migrations
-        run: python manage.py migrate --noinput
-
-      - name: Run API tests
-        run: pytest tests/api/ -v --tb=short
-    name: "API Tests (Django TestClient)"
-    runs-on: ubuntu-latest
-    needs: unit-tests
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install \
-            pytest==8.2.0 pytest-django==4.8.0 pytest-mock==3.14.0 \
-            pytest-asyncio==0.23.8 \
-            python-decouple==3.8 django==5.0.4 \
-            djangorestframework==3.15.1 \
-            djangorestframework-simplejwt==5.3.1 \
-            django-cors-headers==4.3.1 django-filter==24.2 \
-            structlog==24.1.0 dj-database-url==2.1.0 \
-            whitenoise==6.6.0 celery==5.4.0 redis==5.0.4 \
-            Pillow \
-            httpx==0.27.2 \
-            beautifulsoup4==4.12.3 fake-useragent==1.5.1 \
-            requests==2.31.0 pandas==2.2.2
-
-      - name: Create .env
-        run: |
-          echo "DJANGO_SECRET_KEY=ci-secret-key" > .env
-          echo "GEMINI_API_KEY=dummy" >> .env
-          echo "GEMINI_MODEL=gemini-2.0-flash" >> .env
-          echo "SCRAPER_HEADLESS=True" >> .env
-          echo "SCRAPER_TIMEOUT=30" >> .env
-          echo "SCRAPER_MAX_RETRIES=3" >> .env
-          echo "SCRAPER_DELAY_MIN=1" >> .env
-          echo "SCRAPER_DELAY_MAX=3" >> .env
-          echo "JWT_ACCESS_TOKEN_LIFETIME_MINUTES=60" >> .env
-          echo "JWT_REFRESH_TOKEN_LIFETIME_DAYS=7" >> .env
-
-      - name: Run migrations
-        run: python manage.py migrate --noinput
-
-      - name: Run API tests
-        run: pytest tests/api/ -v --tb=short
-  # ── JOB 4: E2E Tests (Selenium + Chrome) ─────────────────────
-  # e2e-tests:
-  #   name: "E2E Tests (Selenium Chrome)"
-  #   runs-on: ubuntu-latest
-  #   needs: [integration-tests, api-tests]
-
-  #   services:
-  #     postgres:
-  #       image: postgres:16-alpine
-  #       env:
-  #         POSTGRES_DB: qa_pilot_test
-  #         POSTGRES_USER: postgres
-  #         POSTGRES_PASSWORD: postgres
-  #       ports:
-  #         - 5432:5432
-  #       options: >-
-  #         --health-cmd pg_isready
-  #         --health-interval 10s
-  #         --health-timeout 5s
-  #         --health-retries 5
-
-  #   steps:
-  #     - uses: actions/checkout@v4
-
-  #     - uses: actions/setup-python@v5
-  #       with:
-  #         python-version: "3.11"
-  #         cache: pip
-
-  #     - name: Install Chrome
-  #       run: |
-  #         sudo apt-get update
-  #         sudo apt-get install -y chromium-browser chromium-chromedriver
-  #         echo "CHROME_BIN=/usr/bin/chromium-browser" >> $GITHUB_ENV
-  #         echo "CHROMEDRIVER=/usr/bin/chromedriver" >> $GITHUB_ENV
-
-  #     - name: Install dependencies
-  #       run: |
-  #         pip install --upgrade pip
-  #         pip install \
-  #           pytest==8.2.0 pytest-django==4.8.0 pytest-mock==3.14.0 \
-  #           python-decouple==3.8 django==5.0.4 \
-  #           djangorestframework==3.15.1 \
-  #           djangorestframework-simplejwt==5.3.1 \
-  #           django-cors-headers==4.3.1 django-filter==24.2 \
-  #           structlog==24.1.0 dj-database-url==2.1.0 \
-  #           whitenoise==6.6.0 celery==5.4.0 redis==5.0.4 \
-  #           psycopg2-binary==2.9.9 \
-  #           Pillow \
-  #           beautifulsoup4==4.12.3 fake-useragent==1.5.1 \
-  #           requests==2.31.0 pandas==2.2.2 factory-boy==3.3.0
-
-  #     - name: Create .env
-  #       run: |
-  #         echo "DJANGO_SECRET_KEY=ci-secret-key" > .env
-  #         echo "GEMINI_API_KEY=dummy" >> .env
-  #         echo "GEMINI_MODEL=gemini-2.0-flash" >> .env
-  #         echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5432/qa_pilot_test" >> .env
-  #         echo "SCRAPER_HEADLESS=True" >> .env
-  #         echo "SCRAPER_TIMEOUT=30" >> .env
-  #         echo "SCRAPER_MAX_RETRIES=3" >> .env
-  #         echo "SCRAPER_DELAY_MIN=1" >> .env
-  #         echo "SCRAPER_DELAY_MAX=3" >> .env
-  #         echo "JWT_ACCESS_TOKEN_LIFETIME_MINUTES=60" >> .env
-  #         echo "JWT_REFRESH_TOKEN_LIFETIME_DAYS=7" >> .env
-
-  #     - name: Run migrations
-  #       run: python manage.py migrate --noinput
-
-  #     - name: Start Django server
-  #       run: |
-  #         python manage.py runserver 0.0.0.0:8000 &
-  #         sleep 5
-  #         curl -f http://localhost:8000/ || echo "Server starting..."
-
-  #     - name: Run E2E tests
-  #       run: pytest tests/e2e/ -v --tb=short
 
   # ── Final Summary ─────────────────────────────────────────────
   all-tests-passed:

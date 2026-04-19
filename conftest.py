@@ -43,7 +43,7 @@ def scraped_hn_data():
         {"id": "39876004", "title": "Why I switched from unittest to pytest", "score": "178 points", "author": "python_dev"},
         {"id": "39876005", "title": "LangChain + Gemini for test automation", "score": "289 points", "author": "ai_tester"},
     ]
-
+print("Django setup complete in conftest.py")
 
 @pytest.fixture
 def api_client():

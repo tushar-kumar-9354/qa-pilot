@@ -17,6 +17,75 @@ QA-Pilot is a full-stack QA Automation platform that demonstrates everything a s
 
 ---
 
+## 💡 Why QA-Pilot?
+
+QA-Pilot solves critical challenges in modern QA engineering:
+
+| Challenge | How QA-Pilot Addresses It |
+|-----------|---------------------------|
+| **Manual test maintenance is slow** | Self-healing selectors automatically repair broken locators when UI changes |
+| **Test creation is time-consuming** | AI-powered test generator creates pytest code from natural language descriptions |
+| **Flaky tests waste CI time** | Smart retry logic + AI failure analyzer identifies root causes fast |
+| **Scraping + testing silos** | Unified platform combines web scraping, data fixtures, and test execution |
+| **Missing real-world test data** | Live scraping from Wikipedia & Hacker News provides realistic test fixtures |
+| **QA skills gap** | Production-grade example covering all skills a senior QA Engineer needs |
+
+---
+
+## ⚙️ How It Works
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        QA-PILOT WORKFLOW                         │
+└─────────────────────────────────────────────────────────────────┘
+
+  1️⃣ SCRAPE          2️⃣ GENERATE         3️⃣ EXECUTE          4️⃣ HEAL
+  Real data          AI writes          Pytest runs         AI fixes
+  + fixtures         pytest code        in CI/CD            broken locators
+
+     ▼                   ▼                   ▼                   ▼
+┌─────────┐        ┌──────────┐       ┌──────────┐       ┌──────────────┐
+│Wikipedia│        │ Gemini   │       │ Selenium  │       │ Self-Healing  │
+│Hacker   │   →    │ 2.0 Flash│   →   │ Chrome    │   →   │ Selector AI   │
+│News     │        │ Agent    │       │ Headless  │       │ Agent         │
+└─────────┘        └──────────┘       └──────────┘       └──────────────┘
+     │                   │                   │                   │
+     ▼                   ▼                   ▼                   ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      DASHBOARD (Live Stats)                      │
+│   • Test pass/fail rates   • Scraped data viewer   • AI Chat    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Core Components:**
+- **Scraper** → Selenium headless Chrome collects real data → normalized as pytest fixtures
+- **AI Generator** → LangChain + Gemini 2.0 Flash converts descriptions → pytest code
+- **Test Runner** → Pytest subprocess executor with real-time WebSocket progress
+- **Failure Analyzer** → AI parses stack traces → root cause + fix suggestion
+- **Self-Healing Selector** → AI finds new CSS/XPath when locators break
+
+---
+
+## 📈 Impact
+
+| Metric | Value |
+|--------|-------|
+| **Tests** | 60+ automated tests across 5 types (Unit, API, Integration, E2E, Performance) |
+| **CI/CD** | 4 parallel jobs run on every push — ~2 min total |
+| **Coverage** | All major Django endpoints and workflows tested |
+| **AI Integration** | 3 AI agents (Generator, Analyzer, Self-Healer) powered by Gemini 2.0 |
+| **Real Data** | 238+ Wikipedia rows scraped and used as test fixtures |
+| **Production-Ready** | Docker Compose stack with 6 services (Django, PostgreSQL, Redis, Celery, etc.) |
+
+**What This Demonstrates:**
+- End-to-end QA automation skills for senior-level roles
+- AI/LLM integration patterns in production software
+- CI/CD best practices with GitHub Actions
+- Full-stack development (Django + Selenium + Celery)
+- Test fixture generation from real-world data
+
+---
+
 ## ✅ Live Features
 
 | Feature | Status | Description |

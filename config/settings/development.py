@@ -10,7 +10,8 @@ MIDDLEWARE = [m for m in MIDDLEWARE
               if 'debug_toolbar' not in m]
 
 CORS_ALLOW_ALL_ORIGINS = True
-INTERNAL_IPS = ['127.0.0.1']from .base import *
+INTERNAL_IPS = ['127.0.0.1']
+from .base import *
 
 DEBUG = True
 
